@@ -1,0 +1,24 @@
+# Root .gitignore for PAIA MERN project
+
+# Backend
+backend/node_modules/
+backend/.env
+backend/logs/
+backend/*.log
+backend/coverage/
+
+# Frontend
+frontend/node_modules/
+frontend/.env
+frontend/build/
+frontend/dist/
+frontend/.DS_Store
+frontend/*.log
+
+# Global
+.DS_Store
+node_modules/
+.env
+*.log
+.vscode/
+.idea/
