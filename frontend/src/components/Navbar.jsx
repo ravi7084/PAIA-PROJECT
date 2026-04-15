@@ -33,7 +33,7 @@ const Navbar = () => {
     setOpen(false);
     await logout();
     toast.success('Logged out successfully');
-    navigate('/login');
+    navigate('/');
   };
 
   return (

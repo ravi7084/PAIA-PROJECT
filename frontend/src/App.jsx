@@ -6,6 +6,7 @@ import PrivateRoute from './components/PrivateRoute';
 
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import Home from './pages/Home';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import AuthCallback from './pages/AuthCallback';
@@ -40,6 +41,7 @@ const App = () => (
         />
 
         <Routes>
+          <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -55,8 +57,7 @@ const App = () => (
           <Route path="/threat-intel" element={<PrivateRoute><ThreatIntel /></PrivateRoute>} />
           <Route path="/reports" element={<PrivateRoute><Reports /></PrivateRoute>} />
 
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </NotificationProvider>
     </AuthProvider>
