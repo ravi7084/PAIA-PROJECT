@@ -64,55 +64,7 @@ const Sidebar = () => {
 
       <div style={{ flex: 1 }} />
 
-      {/* System Intelligence Panel */}
-      <div className="sidebar-intel-panel">
-        <div className="sidebar-intel-title">
-          <Cpu size={10} />
-          System Intelligence
-        </div>
-
-        <div className="intel-row">
-          <span className="intel-label">System Health</span>
-          <span className="intel-value" style={{ color: 'var(--green)' }}>
-            <StatusDot status="ok" /> Online
-          </span>
-        </div>
-
-        <div className="intel-row">
-          <span className="intel-label">AI Confidence</span>
-          <span className="intel-value" style={{ color: 'var(--indigo-l)' }}>
-            <StatusDot status="ok" /> 94%
-          </span>
-        </div>
-
-        <div className="intel-row">
-          <span className="intel-label">Scan Pipeline</span>
-          <span className="intel-value" style={{ color: 'var(--text2)' }}>
-            <StatusDot status="idle" /> Idle
-          </span>
-        </div>
-
-        <div className="intel-row">
-          <span className="intel-label">Shodan</span>
-          <span className="intel-value" style={{ color: 'var(--green)' }}>
-            <StatusDot status="ok" /> ✓
-          </span>
-        </div>
-
-        <div className="intel-row">
-          <span className="intel-label">VirusTotal</span>
-          <span className="intel-value" style={{ color: 'var(--green)' }}>
-            <StatusDot status="ok" /> ✓
-          </span>
-        </div>
-
-        <div className="intel-row">
-          <span className="intel-label">Gemini AI</span>
-          <span className="intel-value" style={{ color: 'var(--green)' }}>
-            <StatusDot status="ok" /> ✓
-          </span>
-        </div>
-      </div>
+      
     </aside>
   );
 };

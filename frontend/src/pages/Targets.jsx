@@ -261,7 +261,7 @@ const CsvImport = ({ onClose, onDone }) => {
             <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}
               style={{ marginTop: 3 }} />
             <span style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.5 }}>
-              Main confirm karta/karti hun ki is file ke sabhhi targets pe mujhe legal authorization hai.
+              I confirm that I have legal authorization for all targets in this file.
             </span>
           </label>
 
@@ -273,7 +273,7 @@ const CsvImport = ({ onClose, onDone }) => {
       ) : (
         <div>
           <div style={{ color: 'var(--green)', fontSize: 13, marginBottom: 8 }}>
-            ✓ {results.importedCount} targets successfully import hue
+            ✓ {results.importedCount} Targets successfully import
           </div>
           {results.blockedCount > 0 && (
             <div style={{ color: 'var(--red)', fontSize: 13 }}>
@@ -469,7 +469,7 @@ const Targets = () => {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h2>Target Management</h2>
-          <p>Apne authorized testing targets define karo</p>
+          <p>Define yourauthorized testing targets</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setShowCsv(v => !v)} style={{
@@ -609,8 +609,7 @@ const Targets = () => {
                 Legal Authorization Required
               </div>
               <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
-                Main confirm karta/karti hun ki mujhe is target pe penetration testing karne ki
-                explicit written authorization hai. Unauthorized scanning illegal hai.
+                I confirm that I have explicit written authorization to perform penetration testing on this target. Unauthorized scanning is illegal.
               </div>
             </div>
           </label>
@@ -642,12 +641,12 @@ const Targets = () => {
           <div className="empty-state">
             <div className="empty-icon"><Target size={20} /></div>
             <div className="empty-title">
-              {activeTag ? `"${activeTag}" tag ke koi targets nahi` : 'Koi target nahi abhi'}
+              {activeTag ? `"${activeTag}" No targets for the tag.` : 'No targets added yet'}
             </div>
             <div className="empty-sub">
               {activeTag
-                ? 'Dusra tag try karo ya "Sab" pe click karo.'
-                : 'Pehla target add karo — "Add Target" button dabao.'}
+                ? 'Try a different tag, or click on "All".'
+                : 'Add the target first then press the "Add Target" button.'}
             </div>
           </div>
         </div>

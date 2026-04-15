@@ -134,7 +134,7 @@ const Dashboard = () => {
         <div style={{ flex: 1 }}>
           <div className="banner-title">All systems operational — AI Agent, Threat Intelligence & Scan Engine active</div>
           <div className="banner-sub">
-            PAIA is monitoring your attack surface in real-time. Gemini AI confidence: 94% • Last scan: 12 min ago
+            PAIA is monitoring your attack surface in real-time.
           </div>
         </div>
         <button className="banner-cta" onClick={() => toast('Launching AI scan...', { icon: '🚀' })}>

@@ -72,7 +72,7 @@ const Login = () => {
                 <input
                   className="field-input"
                   type="email"
-                  placeholder="ravi@bbdu.ac.in"
+                  placeholder="Enter your email"
                   {...register('email', {
                     required: 'Email is required',
                     pattern:  { value: /\S+@\S+\.\S+/, message: 'Enter a valid email' },

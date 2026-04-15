@@ -115,7 +115,7 @@ const Signup = () => {
                 <input
                   className="field-input"
                   type="text"
-                  placeholder="Ravi Kushwaha"
+                  placeholder="Full name"
                   {...register('name', {
                     required: 'Name is required',
                     minLength: {
@@ -137,7 +137,7 @@ const Signup = () => {
                 <input
                   className="field-input"
                   type="email"
-                  placeholder="ravi@bbdu.ac.in"
+                  placeholder="Enter your email"
                   {...register('email', {
                     required: 'Email is required',
                     pattern: {
