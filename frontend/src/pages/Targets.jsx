@@ -98,7 +98,7 @@ const TagInput = ({ tags, onChange }) => {
         </div>
       )}
       <div style={{ display: 'flex', gap: 6 }}>
-        <input value={val} onChange={e => setVal(e.target.value)} placeholder="Tag likhke Enter dabao"
+        <input value={val} onChange={e => setVal(e.target.value)} placeholder="Enter Tag"
           onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), add())}
           style={{ ...inputSt, flex: 1 }} />
         <button onClick={add} style={{
@@ -207,9 +207,9 @@ const CsvImport = ({ onClose, onDone }) => {
   };
 
   const doImport = async () => {
-    if (!consent) { toast.error('Pehle legal consent confirm karo'); return; }
+    if (!consent) { toast.error('Confirm the legal consent'); return; }
     const f = fileRef.current.files[0];
-    if (!f) { toast.error('CSV file select karo'); return; }
+    if (!f) { toast.error('Select a CSV file'); return; }
     setLoading(true);
     const r = new FileReader();
     r.onload = async (ev) => {
@@ -219,7 +219,7 @@ const CsvImport = ({ onClose, onDone }) => {
         setResults(res.data.data);
         onDone();
       } catch (err) {
-        toast.error(err.response?.data?.message || 'Import fail hua');
+        toast.error(err.response?.data?.message || 'Import failed');
       } finally { setLoading(false); }
     };
     r.readAsText(f);
@@ -430,33 +430,33 @@ const Targets = () => {
   const setF = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
 
   const handleSubmit = async () => {
-    if (!form.name.trim())                          { toast.error('Target name chahiye'); return; }
-    if (!form.domain.trim() && !form.ip_address.trim()) { toast.error('Domain ya IP chahiye'); return; }
-    if (!form.consentGiven)                         { toast.error('Legal consent confirm karo'); return; }
+    if (!form.name.trim())                          { toast.error('Target name'); return; }
+    if (!form.domain.trim() && !form.ip_address.trim()) { toast.error('Enter Domain or IP Address'); return; }
+    if (!form.consentGiven)                         { toast.error('Confirm the legal consent'); return; }
 
     setSubmitting(true);
     try {
       if (editTarget) {
         await api.put(`/targets/${editTarget._id}`, form);
-        toast.success('Target update ho gaya');
+        toast.success('Target updated');
       } else {
         await api.post('/targets', form);
-        toast.success('Target add ho gaya');
+        toast.success('Target added');
       }
       fetchTargets(activeTag);
       closeForm();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Kuch galat hua');
+      toast.error(err.response?.data?.message || 'Failed to save target');
     } finally { setSubmitting(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Is target ko hata dein?')) return;
+    if (!window.confirm('Remove this target?')) return;
     try {
       await api.delete(`/targets/${id}`);
-      toast.success('Target hata diya');
+      toast.success('Target removed');
       setTargets(p => p.filter(t => t._id !== id));
-    } catch { toast.error('Delete nahi hua'); }
+    } catch { toast.error('Failed to delete target'); }
   };
 
   // Saare unique tags
@@ -469,7 +469,7 @@ const Targets = () => {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h2>Target Management</h2>
-          <p>Define yourauthorized testing targets</p>
+          <p>Define your authorized testing targets</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setShowCsv(v => !v)} style={{
@@ -538,7 +538,7 @@ const Targets = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div className="card-title" style={{ margin: 0 }}>
               <Target size={13} />
-              {editTarget ? 'Target Edit Karo' : 'Naya Target Add Karo'}
+              {editTarget ? 'Edit Target' : 'Add New Target'}
             </div>
             <button onClick={closeForm} style={{ background: 'none', border: 'none', color: 'var(--text3)', cursor: 'pointer' }}>
               <X size={16} />
@@ -549,17 +549,17 @@ const Targets = () => {
 
             <div>
               <FieldLabel text="Target Name *" />
-              <input value={form.name} onChange={setF('name')} placeholder="e.g. Main Website" style={inputSt} />
+              <input value={form.name} onChange={setF('name')} placeholder="Website name" style={inputSt} />
             </div>
 
             <div>
               <FieldLabel text="Domain" />
-              <input value={form.domain} onChange={setF('domain')} placeholder="e.g. example.com" style={inputSt} />
+              <input value={form.domain} onChange={setF('domain')} placeholder=" example.com" style={inputSt} />
             </div>
 
             <div>
               <FieldLabel text="IP Address" />
-              <input value={form.ip_address} onChange={setF('ip_address')} placeholder="e.g. 203.0.113.10" style={inputSt} />
+              <input value={form.ip_address} onChange={setF('ip_address')} placeholder=" Your IP Address" style={inputSt} />
             </div>
 
             <div>
@@ -620,7 +620,7 @@ const Targets = () => {
               padding: '9px 22px', borderRadius: 8, cursor: 'pointer',
               fontWeight: 600, fontSize: 13, opacity: submitting ? .7 : 1,
             }}>
-              {submitting ? 'Save ho raha hai...' : editTarget ? 'Update Karo' : 'Add Karo'}
+              {submitting ? 'Saving...' : editTarget ? 'Update Target' : 'Add Target'}
             </button>
             <button onClick={closeForm} style={{
               background: 'transparent', color: 'var(--text3)',
@@ -634,7 +634,7 @@ const Targets = () => {
       {/* Target List */}
       {loading ? (
         <div className="dark-card" style={{ textAlign: 'center', padding: '40px', color: 'var(--text3)' }}>
-          Targets load ho rahe hain...
+          Targets loading...
         </div>
       ) : targets.length === 0 ? (
         <div className="dark-card">

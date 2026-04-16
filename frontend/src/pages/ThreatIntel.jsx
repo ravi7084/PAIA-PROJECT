@@ -144,6 +144,14 @@ const ThreatIntel = () => {
     setAiSummary('');
     setSummaryLoading(true);
     setExpanded({});
+    publishDashboardEvent({
+      source: 'threat-intel',
+      title: `Threat intel started: ${clean}`,
+      meta: 'Collecting intelligence from providers',
+      severity: 'info',
+      riskScore: 0,
+      target: clean,
+    });
 
     try {
       const data = await lookupAll(clean);
@@ -171,6 +179,14 @@ const ThreatIntel = () => {
         target: clean,
       });
     } catch (err) {
+      publishDashboardEvent({
+        source: 'threat-intel',
+        title: `Threat intel failed: ${clean}`,
+        meta: err?.response?.data?.message || 'Lookup failed',
+        severity: 'high',
+        riskScore: 0,
+        target: clean,
+      });
       toast.error(err?.response?.data?.message || 'Lookup failed');
     } finally {
       setLoading(false);

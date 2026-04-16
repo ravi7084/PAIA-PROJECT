@@ -13,7 +13,7 @@ import ActivityLog from '../components/ActivityLog';
 import { formatDate } from '../utils/helpers';
 import { DASHBOARD_UPDATE_EVENT, getDashboardEvents } from '../utils/dashboardRealtime';
 
-/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Helpers ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */
+/* Helpers */
 const sevColor = s => ({ critical: '#ff3b5c', high: '#ff6b35', medium: '#ffb800', low: '#818cf8', info: '#64748b' }[s] || '#64748b');
 
 const MetricCard = ({ icon: Icon, value, label, sub, color, bg, trend, trendVal }) => (
@@ -38,7 +38,7 @@ const ThreatFeedItem = ({ severity, title, meta, time }) => (
     <div className={`threat-dot ${severity}`} />
     <div style={{ flex: 1, minWidth: 0 }}>
       <div className="threat-title">{title}</div>
-      <div className="threat-meta">{meta} ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {time}</div>
+      <div className="threat-meta">{meta} {time}</div>
     </div>
     <span className={`sev-badge ${severity}`}>{severity}</span>
   </div>
@@ -48,7 +48,7 @@ const AIRecCard = ({ icon, text, action }) => (
   <div className="ai-rec-item">
     <div className="ai-rec-icon">{icon}</div>
     <div className="ai-rec-text">{text}</div>
-    <div className="ai-rec-action">{action} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢</div>
+    <div className="ai-rec-action">{action}</div>
   </div>
 );
 
@@ -57,6 +57,35 @@ const MiniSeverityBar = ({ label, value, tone }) => (
     <div className="severity-row-top"><span>{label}</span><span>{value}</span></div>
     <div className="severity-track">
       <div className={`severity-fill ${tone}`} style={{ width: `${Math.min(Math.max(value * 5, value === 0 ? 4 : 6), 100)}%` }} />
+    </div>
+  </div>
+);
+
+const LiveOperationItem = ({ source, target, title, severity, time, meta }) => (
+  <div style={{
+    display: 'grid',
+    gridTemplateColumns: '130px 1fr auto',
+    gap: 10,
+    alignItems: 'center',
+    padding: '9px 10px',
+    borderRadius: 10,
+    border: '1px solid var(--border)',
+    background: 'rgba(255,255,255,0.02)',
+  }}>
+    <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 700 }}>
+      {source}
+    </div>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {target || 'target not available'} | {meta || 'live event stream'}
+      </div>
+    </div>
+    <div style={{ textAlign: 'right' }}>
+      <div className={`sev-badge ${severity || 'info'}`}>{severity || 'info'}</div>
+      <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 4 }}>{time}</div>
     </div>
   </div>
 );
@@ -71,20 +100,20 @@ const SkeletonCard = ({ lines = 3, tall = false }) => (
   </div>
 );
 
-/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Mock threat feed (backend will send via WebSocket) ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */
+/*  Mock threat feed (backend will send via WebSocket) */
 const mockThreats = [
-  { severity: 'critical', title: 'SSH Brute Force Detected', meta: '192.168.1.45 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Port 22', time: '2m ago' },
-  { severity: 'high', title: 'Outdated Apache Version', meta: 'CVE-2021-41773 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â example.com', time: '8m ago' },
-  { severity: 'medium', title: 'SSL Certificate Expiring', meta: 'api.target.io ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â 5 days left', time: '15m ago' },
+  { severity: 'critical', title: 'SSH Brute Force Detected', meta: '192.168.1.45  Port 22', time: '2m ago' },
+  { severity: 'high', title: 'Outdated Apache Version', meta: 'CVE-2021-41773 example.com', time: '8m ago' },
+  { severity: 'medium', title: 'SSL Certificate Expiring', meta: 'api.target.io  5 days left', time: '15m ago' },
   { severity: 'low', title: 'Information Disclosure', meta: 'Server header exposed on target.com', time: '1h ago' },
-  { severity: 'critical', title: 'SQL Injection Vector', meta: 'login.php?id= ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â target.io', time: '2h ago' },
+  { severity: 'critical', title: 'SQL Injection Vector', meta: 'login.php?id=  target.io', time: '2h ago' },
 ];
 
 const mockRecs = [
-  { icon: 'ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬â„¢', text: 'Close SSH port 22 on 192.168.1.45 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â brute force attempts detected', action: 'Apply fix' },
-  { icon: 'ÃƒÂ¢Ã‚Â¬Ã¢â‚¬Â ÃƒÂ¯Ã‚Â¸Ã‚Â', text: 'Update Apache 2.4.49 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ 2.4.58 on example.com (CVE-2021-41773)', action: 'View CVE' },
-  { icon: 'ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â', text: 'Renew SSL certificate for api.target.io before expiration', action: 'Renew' },
-  { icon: 'ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂºÃ‚Â¡ÃƒÂ¯Ã‚Â¸Ã‚Â', text: 'Enable rate limiting on login endpoints to prevent brute force', action: 'Configure' },
+  { icon: '', text: 'Close SSH port 22 on 192.168.1.45 brute force attempts detected', action: 'Apply fix' },
+  { icon: '', text: 'Update Apache 2.4.49 2.4.58 on example.com (CVE-2021-41773)', action: 'View CVE' },
+  { icon: '', text: 'Renew SSL certificate for api.target.io before expiration', action: 'Renew' },
+  { icon: '', text: 'Enable rate limiting on login endpoints to prevent brute force', action: 'Configure' },
 ];
 
 const timeAgo = (iso) => {
@@ -101,6 +130,13 @@ const recActionBySeverity = (severity) => {
   if (severity === 'medium') return 'Review controls';
   return 'Monitor';
 };
+
+const sourceLabel = (source) => {
+  if (source === 'scan-center') return 'Scan Center';
+  if (source === 'threat-intel') return 'Threat Intel';
+  return 'Security Stream';
+};
+
 const Dashboard = () => {
   const { user } = useAuth();
   const { notifications } = useNotifications();
@@ -167,7 +203,7 @@ const Dashboard = () => {
     ? realtimeEvents.slice(0, 5).map((item) => ({
       severity: item.severity || 'info',
       title: item.title || 'Security event',
-      meta: item.meta || item.target || 'event stream',
+      meta: [item.target, item.meta].filter(Boolean).join(' | ') || 'event stream',
       time: timeAgo(item.timestamp),
     }))
     : mockThreats;
@@ -192,25 +228,38 @@ const Dashboard = () => {
     { label: 'Low', value: lowCount, tone: 'low' },
   ];
 
+  const liveOperations = realtimeEvents
+    .filter((item) => item?.source === 'scan-center' || item?.source === 'threat-intel')
+    .slice(0, 8)
+    .map((item) => ({
+      id: item.id,
+      source: sourceLabel(item.source),
+      target: item.target || '',
+      title: item.title || 'Security event',
+      severity: item.severity || 'info',
+      meta: item.meta || '',
+      time: timeAgo(item.timestamp),
+    }));
+
   return (
     <Layout>
-      {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Header ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+      {/* Header */}
       <div className="page-header">
-        <h2>{greeting()}, {user?.name?.split(' ')[0]} ÃƒÂ°Ã…Â¸Ã¢â‚¬ËœÃ¢â‚¬Â¹</h2>
-        <p>Security Operations Center ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Real-time threat visibility and AI-driven intelligence</p>
+        <h2>{greeting()}, {user?.name?.split(' ')[0]}</h2>
+        <p>Security Operations Center. Real-time threat visibility and AI-driven intelligence</p>
       </div>
 
-      {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ System Status Banner ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+      {/* System Status Banner */}
       <div className="banner">
         <div className="banner-icon"><Shield size={14} /></div>
         <div style={{ flex: 1 }}>
-          <div className="banner-title">All systems operational ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â AI Agent, Threat Intelligence & Scan Engine active</div>
+          <div className="banner-title">All systems operational AI Agent, Threat Intelligence & Scan Engine active</div>
           <div className="banner-sub">
             PAIA is monitoring your attack surface in real-time.
           </div>
         </div>
-        <button className="banner-cta" onClick={() => toast('Launching AI scan...', { icon: 'ÃƒÂ°Ã…Â¸Ã…Â¡Ã¢â€šÂ¬' })}>
-          Quick Scan ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢
+        <button className="banner-cta" onClick={() => toast('Launching AI scan...', { icon: '' })}>
+          Quick Scan 
         </button>
       </div>
 
@@ -224,7 +273,7 @@ const Dashboard = () => {
         </>
       ) : (
         <>
-          {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ SOC Metrics ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+          {/* SOC Metrics */}
           <div className="stats-grid">
             <MetricCard
               icon={Timer}
@@ -262,7 +311,7 @@ const Dashboard = () => {
             />
           </div>
 
-          {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Live Threat Feed + AI Recommendations ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+          {/* Live Threat Feed + AI Recommendations  */}
           <div className="dashboard-two-col">
             <div className="dark-card">
               <div className="card-title"><Radio size={13} /> Live Threat Feed</div>
@@ -283,7 +332,20 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Vulnerability Distribution + Platform Health ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+          {/* Vulnerability Distribution + Platform Health */}
+          <div className="dark-card" style={{ marginTop: 14 }}>
+            <div className="card-title"><ScanLine size={13} /> Live Target Operations</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {liveOperations.length ? (
+                liveOperations.map((item) => <LiveOperationItem key={item.id} {...item} />)
+              ) : (
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  No live scan activity yet. Start a scan from Scan Center or Threat Intel.
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="dashboard-two-col">
             <div className="dark-card">
               <div className="card-title"><Layers3 size={13} /> Vulnerability Heatmap</div>
@@ -337,7 +399,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Activity Log + Account Overview ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+          {/*  Activity Log + Account Overview  */}
           <div className="advanced-bottom-grid">
             <ActivityLog notifications={notifications} />
 
@@ -350,7 +412,7 @@ const Dashboard = () => {
                 </div>
                 <div className="acc-item">
                   <div className="acc-label">Email</div>
-                  <div className="acc-value">{stats?.emailVerified ? 'ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Verified' : 'ÃƒÂ¢Ã…Â¡Ã‚Â  Pending'}</div>
+                  <div className="acc-value">{stats?.emailVerified ? 'Verified' : 'Pending'}</div>
                 </div>
                 <div className="acc-item">
                   <div className="acc-label">Auth</div>
@@ -364,7 +426,7 @@ const Dashboard = () => {
 
               {!stats?.emailVerified && (
                 <div className="dashboard-warning-note">
-                  ÃƒÂ¢Ã…Â¡Ã‚Â  Email not verified ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â verify to unlock full platform capabilities.
+                  Email not verified. Verify to unlock full platform capabilities.
                 </div>
               )}
             </div>
@@ -376,3 +438,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+

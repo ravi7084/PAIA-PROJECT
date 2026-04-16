@@ -97,6 +97,9 @@ const AutoReconPanel = () => {
   const socketRef = useRef(null);
   const pollRef = useRef(null);
   const publishedScansRef = useRef(new Set());
+  const toolEventStateRef = useRef({});
+  const currentTargetRef = useRef('');
+  const currentRiskRef = useRef(0);
 
   const refreshRecent = async () => {
     try {
@@ -125,10 +128,13 @@ const AutoReconPanel = () => {
       mapped[t] = 'queued';
     });
     setLiveToolStatus(mapped);
+    toolEventStateRef.current = {};
   };
 
   const syncFromScan = (scan) => {
     if (!scan) return;
+    currentTargetRef.current = scan.target || currentTargetRef.current;
+    currentRiskRef.current = scan?.verdict?.score ?? currentRiskRef.current;
     if (scan.phase) setSelectedPhase(scan.phase);
     const mapped = {};
     (scan.toolsRequested || []).forEach((tool) => {
@@ -205,12 +211,41 @@ const AutoReconPanel = () => {
               ? 'Running web application vulnerability scan...'
               : 'Running reconnaissance...'
       );
+      publishDashboardEvent({
+        source: 'scan-center',
+        title: `Scan started: ${payload?.target || targetInput.trim() || 'target'}`,
+        meta: `${(payload?.phase || selectedPhase || 'recon').toUpperCase()} | Tools ${payload?.toolsRequested?.length || 0}`,
+        severity: 'info',
+        riskScore: currentRiskRef.current,
+        target: payload?.target || targetInput.trim() || '',
+      });
       resetLiveState(payload.toolsRequested || TOOL_SETS[payload?.phase || selectedPhase] || TOOL_SETS.recon);
     });
 
     socket.on('recon:tool_update', (payload) => {
       if (payload?.scanId !== id) return;
       setLiveToolStatus((prev) => ({ ...prev, [payload.tool]: payload.status }));
+      const key = `${payload.tool}:${payload.status}`;
+      if (!toolEventStateRef.current[key]) {
+        toolEventStateRef.current[key] = true;
+        const progressText =
+          payload?.progress?.total
+            ? `${payload.progress.completed || 0}/${payload.progress.total} tools`
+            : 'tool update';
+        publishDashboardEvent({
+          source: 'scan-center',
+          title: `${payload.tool} ${payload.status}`,
+          meta: `${(selectedPhase || 'recon').toUpperCase()} | ${progressText}`,
+          severity:
+            payload.status === 'failed'
+              ? 'high'
+              : payload.status === 'success'
+                ? 'low'
+                : 'info',
+          riskScore: currentRiskRef.current,
+          target: currentTargetRef.current || targetInput.trim() || '',
+        });
+      }
       if (payload?.result) {
         setLatest((prev) => {
           if (!prev) return prev;
@@ -237,6 +272,14 @@ const AutoReconPanel = () => {
       if (payload?.scanId !== id) return;
       setLoading(false);
       setStage('Failed');
+      publishDashboardEvent({
+        source: 'scan-center',
+        title: `Scan failed: ${currentTargetRef.current || targetInput.trim() || 'target'}`,
+        meta: payload?.reason || 'Recon failed',
+        severity: 'critical',
+        riskScore: currentRiskRef.current,
+        target: currentTargetRef.current || targetInput.trim() || '',
+      });
       toast.error(payload?.reason || 'Recon failed');
       stopPolling();
     });
@@ -262,6 +305,8 @@ const AutoReconPanel = () => {
 
     setLoading(true);
     setStage('Creating target...');
+    currentTargetRef.current = v.target;
+    currentRiskRef.current = 0;
     setLatest({
       target: v.target,
       phase: selectedPhase,
