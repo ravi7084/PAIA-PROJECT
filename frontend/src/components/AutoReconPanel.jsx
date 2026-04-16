@@ -21,6 +21,7 @@ import {
   getReconScanById,
   deleteReconScanById
 } from '../api/recon.api';
+import { publishDashboardEvent } from '../utils/dashboardRealtime';
 
 const box = {
   background: 'var(--card-bg)',
@@ -95,6 +96,7 @@ const AutoReconPanel = () => {
   const [deletingScanId, setDeletingScanId] = useState('');
   const socketRef = useRef(null);
   const pollRef = useRef(null);
+  const publishedScansRef = useRef(new Set());
 
   const refreshRecent = async () => {
     try {
@@ -137,6 +139,29 @@ const AutoReconPanel = () => {
     });
     setLiveToolStatus(mapped);
     setLatest(scan);
+
+    if (
+      scan?._id &&
+      ['completed', 'partial', 'failed'].includes(scan.status) &&
+      !publishedScansRef.current.has(scan._id)
+    ) {
+      publishedScansRef.current.add(scan._id);
+      publishDashboardEvent({
+        source: 'scan-center',
+        title: `Scan ${scan.status}: ${scan.target}`,
+        meta: `${(scan.phase || 'recon').toUpperCase()} | Score ${scan?.verdict?.score ?? 0}/100`,
+        severity:
+          scan?.verdict?.level === 'high'
+            ? 'critical'
+            : scan?.verdict?.level === 'medium'
+              ? 'high'
+              : scan?.verdict?.level === 'low'
+                ? 'medium'
+                : 'low',
+        riskScore: scan?.verdict?.score ?? 0,
+        target: scan.target,
+      });
+    }
   };
 
   const startPolling = (id) => {

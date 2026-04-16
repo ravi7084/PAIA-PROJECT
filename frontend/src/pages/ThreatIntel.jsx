@@ -1,14 +1,106 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Search, Globe, Shield, AlertTriangle, Loader2, ChevronDown, ChevronUp,
-  BrainCircuit, Zap, Eye, AlertCircle,
+  Search, Globe, Loader2, ChevronDown, ChevronUp, BrainCircuit, Eye,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/layout';
 import { lookupAll } from '../api/threatIntel.api';
+import { publishDashboardEvent } from '../utils/dashboardRealtime';
 
-const providerIcon = { shodan: '🔍', virustotal: '🛡️', whois: '📋', abuseipdb: '🚨', hunter: '📧', otx: '🌐', censys: '🔐' };
-const providerLabel = { shodan: 'Shodan', virustotal: 'VirusTotal', whois: 'WHOIS', abuseipdb: 'AbuseIPDB', hunter: 'Hunter.io', otx: 'AlienVault OTX', censys: 'Censys' };
+const providerIcon = {
+  shodan: '🔍',
+  virustotal: '🛡️',
+  whois: '📋',
+  abuseipdb: '🚨',
+  hunter: '📧',
+  otx: '🌐',
+  censys: '🔐',
+};
+
+const providerLabel = {
+  shodan: 'Shodan',
+  virustotal: 'VirusTotal',
+  whois: 'WHOIS',
+  abuseipdb: 'AbuseIPDB',
+  hunter: 'Hunter.io',
+  otx: 'AlienVault OTX',
+  censys: 'Censys',
+};
+
+const SCAN_STORAGE_KEY = 'paia_threat_intel_scans_v1';
+const ACTIVE_SCAN_KEY = 'paia_threat_intel_active_v1';
+
+const extractRisk = (summary) => {
+  const scoreMatch = summary.match(/Risk Score:\s*(\d+)\/100/i);
+  const levelMatch = summary.match(/Risk Level:\s*([A-Z]+)/i);
+  return {
+    score: scoreMatch ? Number(scoreMatch[1]) : 0,
+    level: levelMatch ? levelMatch[1].toLowerCase() : 'info',
+  };
+};
+
+const buildAISummary = (targetName, data) => {
+  const intelResults = data?.results || [];
+  const factors = [];
+  let riskLevel = 'LOW';
+  let riskScore = 20;
+
+  intelResults.forEach((r) => {
+    if (r.provider === 'virustotal' && r.malicious > 0) {
+      factors.push(`VirusTotal flagged by ${r.malicious} engines (${r.suspicious} suspicious)`);
+      riskScore += r.malicious * 8;
+      if (r.malicious > 3) riskLevel = 'HIGH';
+      if (r.malicious > 8) riskLevel = 'CRITICAL';
+    }
+
+    if (r.provider === 'shodan' && r.ports?.length > 0) {
+      factors.push(`Shodan detected ${r.ports.length} open ports: ${r.ports.slice(0, 6).join(', ')}`);
+      riskScore += r.ports.length * 3;
+      if (r.vulns?.length > 0) {
+        factors.push(`Shodan found ${r.vulns.length} known vulnerabilities`);
+        riskScore += r.vulns.length * 10;
+        riskLevel = 'CRITICAL';
+      }
+    }
+
+    if (r.provider === 'abuseipdb' && r.abuseConfidenceScore > 30) {
+      factors.push(`AbuseIPDB confidence score: ${r.abuseConfidenceScore}% (${r.totalReports} reports)`);
+      riskScore += r.abuseConfidenceScore;
+      if (r.abuseConfidenceScore > 70) riskLevel = 'HIGH';
+    }
+
+    if (r.provider === 'otx' && r.pulseCount > 0) {
+      factors.push(`AlienVault OTX: ${r.pulseCount} threat intelligence pulses`);
+      riskScore += r.pulseCount * 5;
+    }
+
+    if (r.provider === 'hunter' && r.totalEmails > 0) {
+      factors.push(`Hunter.io found ${r.totalEmails} exposed email addresses`);
+      riskScore += 5;
+    }
+  });
+
+  riskScore = Math.min(riskScore, 100);
+  if (riskScore > 75) riskLevel = 'CRITICAL';
+  else if (riskScore > 50) riskLevel = 'HIGH';
+  else if (riskScore > 30) riskLevel = 'MEDIUM';
+
+  return `UNIFIED THREAT INTELLIGENCE SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Target: ${targetName}
+Risk Level: ${riskLevel}
+Risk Score: ${riskScore}/100
+
+ASSESSMENT:
+This ${riskLevel === 'CRITICAL' || riskLevel === 'HIGH' ? 'target presents SIGNIFICANT security concerns' : 'target shows moderate exposure'} based on cross-referencing ${intelResults.filter((r) => !r.skipped && !r.error).length} intelligence sources.
+
+KEY RISK FACTORS:
+${factors.length > 0 ? factors.map((f, i) => `  ${i + 1}. ${f}`).join('\n') : '  No significant risk factors identified.'}
+
+RECOMMENDATION:
+${riskLevel === 'CRITICAL' ? 'IMMEDIATE ACTION REQUIRED - Run full AI penetration test and implement defensive measures.' : riskLevel === 'HIGH' ? 'HIGH PRIORITY - Schedule deep vulnerability scan within 24 hours.' : riskLevel === 'MEDIUM' ? 'MODERATE - Monitor target and run periodic scans.' : 'LOW RISK - Continue routine monitoring.'}`;
+};
 
 const ThreatIntel = () => {
   const [target, setTarget] = useState('');
@@ -17,108 +109,146 @@ const ThreatIntel = () => {
   const [expanded, setExpanded] = useState({});
   const [aiSummary, setAiSummary] = useState('');
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [scanHistory, setScanHistory] = useState([]);
+  const [activeScanId, setActiveScanId] = useState('');
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SCAN_STORAGE_KEY) || '[]');
+      const active = localStorage.getItem(ACTIVE_SCAN_KEY) || '';
+      if (!Array.isArray(saved) || saved.length === 0) return;
+
+      setScanHistory(saved);
+      const selected = saved.find((s) => s.id === active) || saved[0];
+      setActiveScanId(selected.id);
+      setTarget(selected.target || '');
+      setResults(selected.results || null);
+      setAiSummary(selected.aiSummary || '');
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(SCAN_STORAGE_KEY, JSON.stringify(scanHistory));
+    if (activeScanId) localStorage.setItem(ACTIVE_SCAN_KEY, activeScanId);
+  }, [scanHistory, activeScanId]);
 
   const handleLookup = async () => {
     const clean = target.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-    if (!clean) { toast.error('Enter a target'); return; }
-    setLoading(true); setResults(null); setAiSummary('');
+    if (!clean) {
+      toast.error('Enter a target');
+      return;
+    }
+
+    setLoading(true);
+    setResults(null);
+    setAiSummary('');
+    setSummaryLoading(true);
+    setExpanded({});
+
     try {
       const data = await lookupAll(clean);
+      const summary = buildAISummary(clean, data);
+      const scan = {
+        id: `${Date.now()}-${clean}`,
+        target: clean,
+        createdAt: new Date().toISOString(),
+        results: data,
+        aiSummary: summary,
+      };
+
       setResults(data);
-      generateAISummary(clean, data);
+      setAiSummary(summary);
+      setActiveScanId(scan.id);
+      setScanHistory((prev) => [scan, ...prev].slice(0, 100));
+
+      const risk = extractRisk(summary);
+      publishDashboardEvent({
+        source: 'threat-intel',
+        title: `Threat intel scan: ${clean}`,
+        meta: `${risk.level.toUpperCase()} risk (${risk.score}/100)`,
+        severity: risk.level === 'critical' ? 'critical' : risk.level === 'high' ? 'high' : risk.level === 'medium' ? 'medium' : 'low',
+        riskScore: risk.score,
+        target: clean,
+      });
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Lookup failed');
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      setSummaryLoading(false);
+    }
   };
 
-  const generateAISummary = (targetName, data) => {
-    setSummaryLoading(true);
-    const results = data?.results || [];
+  const openSavedScan = (scan) => {
+    setTarget(scan.target || '');
+    setResults(scan.results || null);
+    setAiSummary(scan.aiSummary || '');
+    setActiveScanId(scan.id);
+    setExpanded({});
+  };
 
-    // Build risk factors
-    const factors = [];
-    let riskLevel = 'LOW';
-    let riskScore = 20;
+  const clearAllScans = () => {
+    if (!window.confirm('All saved outputs delete karne hain?')) return;
 
-    results.forEach(r => {
-      if (r.provider === 'virustotal' && r.malicious > 0) {
-        factors.push(`VirusTotal flagged by ${r.malicious} engines (${r.suspicious} suspicious)`);
-        riskScore += r.malicious * 8;
-        if (r.malicious > 3) riskLevel = 'HIGH';
-        if (r.malicious > 8) riskLevel = 'CRITICAL';
-      }
-      if (r.provider === 'shodan' && r.ports?.length > 0) {
-        factors.push(`Shodan detected ${r.ports.length} open ports: ${r.ports.slice(0, 6).join(', ')}`);
-        riskScore += r.ports.length * 3;
-        if (r.vulns?.length > 0) {
-          factors.push(`Shodan found ${r.vulns.length} known vulnerabilities`);
-          riskScore += r.vulns.length * 10;
-          riskLevel = 'CRITICAL';
-        }
-      }
-      if (r.provider === 'abuseipdb' && r.abuseConfidenceScore > 30) {
-        factors.push(`AbuseIPDB confidence score: ${r.abuseConfidenceScore}% (${r.totalReports} reports)`);
-        riskScore += r.abuseConfidenceScore;
-        if (r.abuseConfidenceScore > 70) riskLevel = 'HIGH';
-      }
-      if (r.provider === 'otx' && r.pulseCount > 0) {
-        factors.push(`AlienVault OTX: ${r.pulseCount} threat intelligence pulses`);
-        riskScore += r.pulseCount * 5;
-      }
-      if (r.provider === 'hunter' && r.totalEmails > 0) {
-        factors.push(`Hunter.io found ${r.totalEmails} exposed email addresses`);
-        riskScore += 5;
-      }
-    });
+    setScanHistory([]);
+    setActiveScanId('');
+    setResults(null);
+    setAiSummary('');
+    localStorage.removeItem(SCAN_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_SCAN_KEY);
+    toast.success('Saved outputs cleared');
+  };
 
-    riskScore = Math.min(riskScore, 100);
-    if (riskScore > 75) riskLevel = 'CRITICAL';
-    else if (riskScore > 50) riskLevel = 'HIGH';
-    else if (riskScore > 30) riskLevel = 'MEDIUM';
+  const exportAllScans = () => {
+    if (!scanHistory.length) {
+      toast.error('Export karne ke liye koi output nahi hai');
+      return;
+    }
 
-    const summary = `UNIFIED THREAT INTELLIGENCE SUMMARY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      totalScans: scanHistory.length,
+      scans: scanHistory,
+    };
 
-Target: ${targetName}
-Risk Level: ${riskLevel}
-Risk Score: ${riskScore}/100
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const datePart = new Date().toISOString().slice(0, 10);
 
-ASSESSMENT:
-This ${riskLevel === 'CRITICAL' || riskLevel === 'HIGH' ? 'target presents SIGNIFICANT security concerns' : 'target shows moderate exposure'} based on cross-referencing ${results.filter(r => !r.skipped && !r.error).length} intelligence sources.
+    a.href = url;
+    a.download = `paia-threat-intel-outputs-${datePart}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 
-KEY RISK FACTORS:
-${factors.length > 0 ? factors.map((f, i) => `  ${i + 1}. ${f}`).join('\n') : '  No significant risk factors identified.'}
-
-RECOMMENDATION:
-${riskLevel === 'CRITICAL' ? '⚠️ IMMEDIATE ACTION REQUIRED — Run full AI penetration test and implement defensive measures.' : riskLevel === 'HIGH' ? '🔴 HIGH PRIORITY — Schedule deep vulnerability scan within 24 hours.' : riskLevel === 'MEDIUM' ? '🟡 MODERATE — Monitor target and run periodic scans.' : '🟢 LOW RISK — Continue routine monitoring.'}`;
-
-    // Animate typing
-    let idx = 0;
-    const interval = setInterval(() => {
-      idx += Math.floor(Math.random() * 4) + 2;
-      if (idx >= summary.length) {
-        setAiSummary(summary);
-        setSummaryLoading(false);
-        clearInterval(interval);
-      } else {
-        setAiSummary(summary.slice(0, idx));
-      }
-    }, 12);
+    toast.success('All outputs exported');
   };
 
   const renderValue = (val) => {
-    if (val === null || val === undefined || val === '') return <span style={{ color: 'var(--text3)' }}>—</span>;
+    if (val === null || val === undefined || val === '') return <span style={{ color: 'var(--text3)' }}>-</span>;
     if (typeof val === 'boolean') return <span style={{ color: val ? 'var(--green)' : 'var(--red)' }}>{val ? 'Yes' : 'No'}</span>;
+
     if (Array.isArray(val)) {
       if (val.length === 0) return <span style={{ color: 'var(--text3)' }}>None</span>;
       if (typeof val[0] === 'object') {
-        return <pre style={{ fontSize: 10, color: 'var(--text2)', background: 'rgba(0,0,0,0.2)', padding: 8, borderRadius: 6, overflow: 'auto', maxHeight: 160, margin: 0, border: '1px solid var(--border)' }}>{JSON.stringify(val, null, 2)}</pre>;
+        return (
+          <pre style={{ fontSize: 10, color: 'var(--text2)', background: 'rgba(0,0,0,0.2)', padding: 8, borderRadius: 6, overflow: 'auto', maxHeight: 160, margin: 0, border: '1px solid var(--border)' }}>
+            {JSON.stringify(val, null, 2)}
+          </pre>
+        );
       }
       return <span style={{ color: 'var(--text2)' }}>{val.slice(0, 15).join(', ')}{val.length > 15 ? ` +${val.length - 15} more` : ''}</span>;
     }
+
     if (typeof val === 'object') {
-      return <pre style={{ fontSize: 10, color: 'var(--text2)', background: 'rgba(0,0,0,0.2)', padding: 8, borderRadius: 6, overflow: 'auto', maxHeight: 160, margin: 0, border: '1px solid var(--border)' }}>{JSON.stringify(val, null, 2)}</pre>;
+      return (
+        <pre style={{ fontSize: 10, color: 'var(--text2)', background: 'rgba(0,0,0,0.2)', padding: 8, borderRadius: 6, overflow: 'auto', maxHeight: 160, margin: 0, border: '1px solid var(--border)' }}>
+          {JSON.stringify(val, null, 2)}
+        </pre>
+      );
     }
+
     return <span style={{ color: 'var(--text2)' }}>{String(val).slice(0, 300)}</span>;
   };
 
@@ -126,10 +256,9 @@ ${riskLevel === 'CRITICAL' ? '⚠️ IMMEDIATE ACTION REQUIRED — Run full AI p
     <Layout>
       <div className="page-header">
         <h2><Globe size={22} /> Threat Intelligence</h2>
-        <p>Unified intelligence engine — AI-powered analysis from 7 security data sources</p>
+        <p>Unified intelligence engine - AI-powered analysis from 7 security data sources</p>
       </div>
 
-      {/* ── Search ── */}
       <div className="dark-card" style={{ marginBottom: 14 }}>
         <div className="card-title"><Search size={13} /> Intelligence Lookup</div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -162,16 +291,61 @@ ${riskLevel === 'CRITICAL' ? '⚠️ IMMEDIATE ACTION REQUIRED — Run full AI p
             {loading ? 'Querying...' : 'Analyze Target'}
           </button>
         </div>
+
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button
+            onClick={exportAllScans}
+            style={{
+              border: '1px solid var(--border2)', borderRadius: 8, padding: '8px 12px',
+              background: 'transparent', color: 'var(--text2)', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+            }}
+          >
+            Export All Outputs
+          </button>
+          <button
+            onClick={clearAllScans}
+            style={{
+              border: '1px solid rgba(239,68,68,.3)', borderRadius: 8, padding: '8px 12px',
+              background: 'rgba(239,68,68,.1)', color: 'var(--red)', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+            }}
+          >
+            Clear Saved
+          </button>
+        </div>
       </div>
 
-      {/* ── AI Summary ── */}
+      {scanHistory.length > 0 && (
+        <div className="dark-card" style={{ marginBottom: 14 }}>
+          <div className="card-title"><Eye size={13} /> Saved Outputs ({scanHistory.length})</div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {scanHistory.slice(0, 8).map((scan) => (
+              <button
+                key={scan.id}
+                onClick={() => openSavedScan(scan)}
+                style={{
+                  textAlign: 'left', borderRadius: 10, padding: '10px 12px', cursor: 'pointer',
+                  border: `1px solid ${activeScanId === scan.id ? 'rgba(79,70,229,.5)' : 'var(--border)'}`,
+                  background: activeScanId === scan.id ? 'rgba(79,70,229,.12)' : 'rgba(255,255,255,.01)',
+                  color: 'var(--text)',
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700 }}>{scan.target}</div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                  {new Date(scan.createdAt).toLocaleString()}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(aiSummary || summaryLoading) && (
         <div className="dark-card" style={{ marginBottom: 14 }}>
           <div className="card-title"><BrainCircuit size={13} /> AI Threat Assessment</div>
           <div className="terminal">
             <div className="terminal-header">
               <div className="terminal-dot red" /><div className="terminal-dot yellow" /><div className="terminal-dot green" />
-              <span className="terminal-title">paia-threat-engine — unified analysis</span>
+              <span className="terminal-title">paia-threat-engine - unified analysis</span>
             </div>
             <div className="terminal-body" style={{ minHeight: 120 }}>
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--cyan)' }}>
@@ -183,7 +357,6 @@ ${riskLevel === 'CRITICAL' ? '⚠️ IMMEDIATE ACTION REQUIRED — Run full AI p
         </div>
       )}
 
-      {/* ── Provider Results ── */}
       {results?.results && (
         <div style={{ display: 'grid', gap: 10 }}>
           {results.results.map((r, i) => {
@@ -197,7 +370,7 @@ ${riskLevel === 'CRITICAL' ? '⚠️ IMMEDIATE ACTION REQUIRED — Run full AI p
               <div key={i} className="dark-card" style={{ opacity: isSkipped ? 0.5 : 1, padding: 14 }}>
                 <div
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
-                  onClick={() => setExpanded(prev => ({ ...prev, [i]: !prev[i] }))}
+                  onClick={() => setExpanded((prev) => ({ ...prev, [i]: !prev[i] }))}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 18 }}>{providerIcon[provKey] || '📡'}</span>
@@ -205,17 +378,21 @@ ${riskLevel === 'CRITICAL' ? '⚠️ IMMEDIATE ACTION REQUIRED — Run full AI p
                     {r.cached && <span className="sev-badge info" style={{ fontSize: 8 }}>cached</span>}
                     {isSkipped && <span className="sev-badge medium" style={{ fontSize: 8 }}>skipped: {r.reason}</span>}
                     {isError && <span className="sev-badge critical" style={{ fontSize: 8 }}>error</span>}
-                    {!isSkipped && !isError && <span className="sev-badge low" style={{ fontSize: 8 }}>✓ success</span>}
+                    {!isSkipped && !isError && <span className="sev-badge low" style={{ fontSize: 8 }}>success</span>}
                   </div>
                   {isExpanded ? <ChevronUp size={14} color="var(--text3)" /> : <ChevronDown size={14} color="var(--text3)" />}
                 </div>
+
                 {isExpanded && !isSkipped && (
                   <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
                     {entries.map(([key, val]) => (
-                      <div key={key} style={{
-                        display: 'grid', gridTemplateColumns: '140px 1fr', gap: 10, alignItems: 'start',
-                        padding: '6px 0', borderBottom: '1px solid var(--border)',
-                      }}>
+                      <div
+                        key={key}
+                        style={{
+                          display: 'grid', gridTemplateColumns: '140px 1fr', gap: 10, alignItems: 'start',
+                          padding: '6px 0', borderBottom: '1px solid var(--border)',
+                        }}
+                      >
                         <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'capitalize' }}>
                           {key.replace(/([A-Z])/g, ' $1')}
                         </span>
