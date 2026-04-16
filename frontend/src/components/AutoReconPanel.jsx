@@ -21,7 +21,9 @@ import {
   getReconScanById,
   deleteReconScanById,
   runSubdomainDNS,
-  listRecentSubdomainDNS
+  listRecentSubdomainDNS,
+  runNetworkScan,
+  listRecentNetworkScans
 } from '../api/recon.api';
 import { publishDashboardEvent } from '../utils/dashboardRealtime';
 
@@ -93,6 +95,8 @@ const AutoReconPanel = () => {
   const [latest, setLatest] = useState(null);
   const [recent, setRecent] = useState([]);
   const [recentSubdomainResults, setRecentSubdomainResults] = useState([]);
+  const [recentNetworkResults, setRecentNetworkResults] = useState([]);
+  const [latestNetworkResult, setLatestNetworkResult] = useState(null);
   const [scanId, setScanId] = useState('');
   const [liveToolStatus, setLiveToolStatus] = useState({});
   const [expanded, setExpanded] = useState({});
@@ -109,9 +113,13 @@ const AutoReconPanel = () => {
       const scans = await listRecentRecon();
       setRecent(scans.slice(0, 20));
 
-      // Also refresh Subdomain/DNS history
-      const subResults = await listRecentSubdomainDNS();
+      // Also refresh Subdomain/DNS and Network history
+      const [subResults, netResults] = await Promise.all([
+        listRecentSubdomainDNS(),
+        listRecentNetworkScans()
+      ]);
       setRecentSubdomainResults(subResults);
+      setRecentNetworkResults(netResults);
     } catch {
       setRecent([]);
     }
@@ -350,6 +358,39 @@ const AutoReconPanel = () => {
       return;
     }
 
+    if (selectedPhase === 'network') {
+      setLoading(true);
+      setStage('Running Network Scan (Nmap)...');
+      try {
+        const res = await runNetworkScan(v.target);
+        if (res.success) {
+          toast.success(`Network scan complete for ${v.target}`);
+          const syntheticScan = {
+            target: v.target,
+            status: 'completed',
+            phase: 'network',
+            toolResults: [{
+              tool: 'nmap',
+              status: 'success',
+              output: res.result
+            }],
+            verdict: { level: 'medium', score: 45, label: 'Network scan complete' }
+          };
+          setLatest(syntheticScan);
+          setLatestNetworkResult(syntheticScan);
+          refreshRecent();
+        } else {
+          toast.error(res.message || 'Scan failed');
+        }
+      } catch (err) {
+        toast.error(err?.response?.data?.message || 'Network scan failed');
+      } finally {
+        setLoading(false);
+        setStage('');
+      }
+      return;
+    }
+
     const baseTools = TOOL_SETS[selectedPhase] || TOOL_SETS.recon;
     const toolsToRun = Array.isArray(specificTools) && specificTools.length ? specificTools : baseTools;
 
@@ -466,6 +507,22 @@ const AutoReconPanel = () => {
       verdict: { level: 'low', score: 20, label: 'Historical DNS result' }
     };
     setLatest(syntheticScan);
+  };
+
+  const handleSelectRecentNetwork = (res) => {
+    const syntheticScan = {
+      target: res.domain,
+      status: 'completed',
+      phase: 'network',
+      toolResults: [{
+        tool: 'nmap',
+        status: res.status,
+        output: res.rawOutput
+      }],
+      verdict: { level: 'medium', score: 45, label: 'Historical Network scan' }
+    };
+    setLatest(syntheticScan);
+    setLatestNetworkResult(syntheticScan);
   };
 
   return (
@@ -674,6 +731,7 @@ const AutoReconPanel = () => {
                   </div>
                   {open && (
                     <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text2)' }}>
+                      {/* Subdomain/DNS Results */}
                       {(t.indicators?.subdomains || []).length > 0 && (
                         <div style={{ marginTop: 4 }}>Subdomains: {(t.indicators?.subdomains || []).slice(0, 50).join(', ')}</div>
                       )}
@@ -685,6 +743,23 @@ const AutoReconPanel = () => {
                       )}
                       {(t.indicators?.dnsRecords?.TXT || []).length > 0 && (
                         <div style={{ marginTop: 4 }}>TXT Records: {t.indicators.dnsRecords.TXT.slice(0, 2).join(' | ')}</div>
+                      )}
+
+                      {/* Raw Output (Nmap/Nikto) */}
+                      {t.output && (
+                        <pre style={{
+                          background: '#000',
+                          color: '#0f0',
+                          padding: 10,
+                          borderRadius: 4,
+                          fontSize: 9,
+                          fontFamily: 'monospace',
+                          overflowX: 'auto',
+                          maxHeight: 200,
+                          marginTop: 8
+                        }}>
+                          {t.output}
+                        </pre>
                       )}
                     </div>
                   )}
@@ -702,10 +777,10 @@ const AutoReconPanel = () => {
         
         {selectedPhase === 'subdomain' ? (
           <div style={{ display: 'grid', gap: 6 }}>
-            {filteredSubdomainRecent.length === 0 ? (
+            {recentSubdomainResults.length === 0 ? (
               <div style={{ fontSize: 10, color: 'var(--text3)' }}>No recent scans for this module</div>
             ) : (
-              filteredSubdomainRecent.map((r, i) => (
+              recentSubdomainResults.map((r, i) => (
                 <div
                   key={`${r._id}-${i}`}
                   onClick={() => handleSelectRecentSubdomain(r)}
@@ -721,6 +796,32 @@ const AutoReconPanel = () => {
                   }}
                 >
                   <span style={{ color: 'var(--text2)' }}>{r.subdomain}</span>
+                  <span style={{ color: 'var(--text3)', fontSize: 9 }}>{new Date(r.timestamp).toLocaleDateString()}</span>
+                </div>
+              ))
+            )}
+          </div>
+        ) : selectedPhase === 'network' ? (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {recentNetworkResults.length === 0 ? (
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>No recent scans for this module</div>
+            ) : (
+              recentNetworkResults.map((r, i) => (
+                <div
+                  key={`${r._id}-${i}`}
+                  onClick={() => handleSelectRecentNetwork(r)}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    padding: '6px 8px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  <span style={{ color: 'var(--text2)' }}>{r.domain}</span>
                   <span style={{ color: 'var(--text3)', fontSize: 9 }}>{new Date(r.timestamp).toLocaleDateString()}</span>
                 </div>
               ))

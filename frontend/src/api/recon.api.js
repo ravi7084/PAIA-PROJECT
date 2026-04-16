@@ -84,3 +84,14 @@ export const deleteReconScanById = async (scanId) => {
   const res = await api.delete(`/recon/${scanId}`);
   return res.data?.data || null;
 };
+
+// --- Network Scanning Module ---
+export const runNetworkScan = async (target) => {
+  const res = await api.post('/scan/network', { target });
+  return res.data;
+};
+
+export const listRecentNetworkScans = async (domain = '') => {
+  const res = await api.get('/scan/network/recent', { params: { domain } });
+  return res.data?.results || [];
+};
