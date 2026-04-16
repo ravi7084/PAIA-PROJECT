@@ -69,6 +69,7 @@ app.use(passport.initialize());
 app.use('/api/recon', require('./routes/recon.routes')); // Original recon routes
 app.use('/api/recon', require('./routes/reconRoutes')); // New Subdomain/DNS module
 app.use('/api/scan', require('./routes/networkRoutes')); // New Network Scanning module
+app.use('/api/scan', require('./routes/webScanRoutes')); // New Web Vulnerability module
 
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/user', require('./routes/user.routes'));

@@ -23,7 +23,9 @@ import {
   runSubdomainDNS,
   listRecentSubdomainDNS,
   runNetworkScan,
-  listRecentNetworkScans
+  listRecentNetworkScans,
+  runWebScan,
+  listRecentWebScans
 } from '../api/recon.api';
 import { publishDashboardEvent } from '../utils/dashboardRealtime';
 
@@ -96,6 +98,7 @@ const AutoReconPanel = () => {
   const [recent, setRecent] = useState([]);
   const [recentSubdomainResults, setRecentSubdomainResults] = useState([]);
   const [recentNetworkResults, setRecentNetworkResults] = useState([]);
+  const [recentWebResults, setRecentWebResults] = useState([]);
   const [latestNetworkResult, setLatestNetworkResult] = useState(null);
   const [scanId, setScanId] = useState('');
   const [liveToolStatus, setLiveToolStatus] = useState({});
@@ -113,13 +116,15 @@ const AutoReconPanel = () => {
       const scans = await listRecentRecon();
       setRecent(scans.slice(0, 20));
 
-      // Also refresh Subdomain/DNS and Network history
-      const [subResults, netResults] = await Promise.all([
+      // Also refresh Subdomain/DNS, Network, and Web history
+      const [subResults, netResults, webResults] = await Promise.all([
         listRecentSubdomainDNS(),
-        listRecentNetworkScans()
+        listRecentNetworkScans(),
+        listRecentWebScans()
       ]);
       setRecentSubdomainResults(subResults);
       setRecentNetworkResults(netResults);
+      setRecentWebResults(webResults);
     } catch {
       setRecent([]);
     }
@@ -391,6 +396,55 @@ const AutoReconPanel = () => {
       return;
     }
 
+    if (selectedPhase === 'webapp') {
+      const v = validateTargetInput(targetInput);
+      if (!v.ok) {
+        toast.error(v.message);
+        return;
+      }
+      
+      setLoading(true);
+      setStage('Running Web Vulnerability Scan (Nikto + ZAP)...');
+      try {
+        const res = await runWebScan(targetInput.trim(), { advanced: true });
+        if (res.success) {
+          toast.success(`Web scan complete for ${res.target}`);
+          const syntheticScan = {
+            target: res.target,
+            status: 'completed',
+            phase: 'webapp',
+            toolResults: [
+              {
+                tool: 'nikto',
+                status: 'success',
+                output: res.nikto_result
+              },
+              {
+                tool: 'zap',
+                status: res.zap_result?.length > 0 ? 'success' : 'partial',
+                indicators: { zapAlerts: res.zap_result || [] }
+              }
+            ],
+            verdict: { 
+              level: res.zap_result?.some(a => a.risk === 'High') ? 'high' : 'medium', 
+              score: Math.min(100, (res.zap_result?.length || 0) * 5 + 20), 
+              label: 'Web app analysis complete' 
+            }
+          };
+          setLatest(syntheticScan);
+          refreshRecent();
+        } else {
+          toast.error(res.message || 'Web scan failed');
+        }
+      } catch (err) {
+        toast.error(err?.response?.data?.message || 'Web scan failed');
+      } finally {
+        setLoading(false);
+        setStage('');
+      }
+      return;
+    }
+
     const baseTools = TOOL_SETS[selectedPhase] || TOOL_SETS.recon;
     const toolsToRun = Array.isArray(specificTools) && specificTools.length ? specificTools : baseTools;
 
@@ -523,6 +577,32 @@ const AutoReconPanel = () => {
     };
     setLatest(syntheticScan);
     setLatestNetworkResult(syntheticScan);
+  };
+
+  const handleSelectRecentWeb = (res) => {
+    const syntheticScan = {
+      target: res.target,
+      status: 'completed',
+      phase: 'webapp',
+      toolResults: [
+        {
+          tool: 'nikto',
+          status: 'success',
+          output: res.niktoOutput
+        },
+        {
+          tool: 'zap',
+          status: res.zapAlerts?.length > 0 ? 'success' : 'partial',
+          indicators: { zapAlerts: res.zapAlerts || [] }
+        }
+      ],
+      verdict: { 
+        level: res.zapAlerts?.some(a => a.risk === 'High') ? 'high' : 'medium', 
+        score: Math.min(100, (res.zapAlerts?.length || 0) * 5 + 20), 
+        label: 'Historical Web Scan' 
+      }
+    };
+    setLatest(syntheticScan);
   };
 
   return (
@@ -745,6 +825,41 @@ const AutoReconPanel = () => {
                         <div style={{ marginTop: 4 }}>TXT Records: {t.indicators.dnsRecords.TXT.slice(0, 2).join(' | ')}</div>
                       )}
 
+                      {/* ZAP Results - Table Format */}
+                      {(t.indicators?.zapAlerts || []).length > 0 && (
+                        <div style={{ marginTop: 8, overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
+                            <thead>
+                              <tr style={{ background: 'rgba(255,255,255,0.05)', textAlign: 'left' }}>
+                                <th style={{ padding: 4, border: '1px solid var(--border)' }}>Risk</th>
+                                <th style={{ padding: 4, border: '1px solid var(--border)' }}>Alert</th>
+                                <th style={{ padding: 4, border: '1px solid var(--border)' }}>URL</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {t.indicators.zapAlerts.map((alert, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                                  <td style={{ 
+                                    padding: 4, 
+                                    border: '1px solid var(--border)',
+                                    color: alert.risk === 'High' ? 'var(--red)' : alert.risk === 'Medium' ? 'var(--amber)' : 'var(--green)',
+                                    fontWeight: 700 
+                                  }}>
+                                    {alert.risk}
+                                  </td>
+                                  <td style={{ padding: 4, border: '1px solid var(--border)' }}>{alert.alert}</td>
+                                  <td style={{ padding: 4, border: '1px solid var(--border)', color: 'var(--text3)' }}>
+                                    <div style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {alert.url}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
                       {/* Raw Output (Nmap/Nikto) */}
                       {t.output && (
                         <pre style={{
@@ -822,6 +937,32 @@ const AutoReconPanel = () => {
                   }}
                 >
                   <span style={{ color: 'var(--text2)' }}>{r.domain}</span>
+                  <span style={{ color: 'var(--text3)', fontSize: 9 }}>{new Date(r.timestamp).toLocaleDateString()}</span>
+                </div>
+              ))
+            )}
+          </div>
+        ) : selectedPhase === 'webapp' ? (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {recentWebResults.length === 0 ? (
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>No recent scans for this module</div>
+            ) : (
+              recentWebResults.map((r, i) => (
+                <div
+                  key={`${r._id}-${i}`}
+                  onClick={() => handleSelectRecentWeb(r)}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    padding: '6px 8px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  <span style={{ color: 'var(--text2)' }}>{r.target}</span>
                   <span style={{ color: 'var(--text3)', fontSize: 9 }}>{new Date(r.timestamp).toLocaleDateString()}</span>
                 </div>
               ))

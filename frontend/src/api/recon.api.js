@@ -95,3 +95,14 @@ export const listRecentNetworkScans = async (domain = '') => {
   const res = await api.get('/scan/network/recent', { params: { domain } });
   return res.data?.results || [];
 };
+
+// --- Web Application Vulnerability Module ---
+export const runWebScan = async (target, options = {}) => {
+  const res = await api.post('/scan/web', { target, ...options });
+  return res.data;
+};
+
+export const listRecentWebScans = async (target = '') => {
+  const res = await api.get('/scan/web/recent', { params: { target } });
+  return res.data?.results || [];
+};
