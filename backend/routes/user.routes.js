@@ -1,6 +1,7 @@
 const router = require('express').Router();
 
 const ctrl = require('../controllers/user.controller');
+const dashCtrl = require('../controllers/dashboard.controller');
 const { protect, restrictTo } = require('../models/middleware/auth.middleware');
 const { validate, schemas } = require('../models/middleware/validate.middleware');
 
@@ -10,6 +11,7 @@ router.get('/profile', ctrl.getProfile);
 router.patch('/profile', validate(schemas.updateProfile), ctrl.updateProfile);
 router.patch('/change-password', validate(schemas.changePassword), ctrl.changePassword);
 router.get('/dashboard-stats', ctrl.getDashboardStats);
+router.get('/dashboard-events', dashCtrl.getDashboardEvents);
 router.delete('/account', ctrl.deleteAccount);
 router.post('/logout-all-devices', ctrl.logoutAllDevices);
 

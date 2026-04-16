@@ -11,7 +11,8 @@
  */
 
 const User = require('../models/user.model');
-const Target = require('../models/target.model'); // ← PHASE 2 MEIN ADD KIA
+const Target = require('../models/target.model');
+const ReconScan = require('../models/reconScan.model'); // Added for dashboard stats
 const authService = require('../services/auth.service');
 const logger = require('../utils/logger');
 
@@ -91,10 +92,27 @@ const getDashboardStats = async(req, res, next) => {
     try {
         const user = await User.findById(req.user.id);
 
-        // ← PHASE 2: Real count from MongoDB
         const totalTargets = await Target.countDocuments({
             user_id: req.user.id,
             status: 'active',
+        });
+
+        // ← Real counts from MongoDB ReconScans
+        const activeScans = await ReconScan.countDocuments({
+            user_id: req.user.id,
+            status: { $in: ['queued', 'running'] },
+        });
+
+        // Simple aggregation to count findings by severity
+        const vulnCounts = await ReconScan.aggregate([
+            { $match: { user_id: user._id } },
+            { $unwind: '$findings' },
+            { $group: { _id: '$findings.severity', count: { $sum: 1 } } },
+        ]);
+
+        const statsMap = { critical: 0, high: 0, medium: 0, low: 0 };
+        vulnCounts.forEach((vc) => {
+            if (statsMap[vc._id] !== undefined) statsMap[vc._id] = vc.count;
         });
 
         let profileCompletion = 0;
@@ -117,12 +135,12 @@ const getDashboardStats = async(req, res, next) => {
             data: {
                 user: authService.formatUser(user),
                 stats: {
-                    totalTargets, // ← PHASE 2: real DB count (pehle 0 tha)
-                    activeScans: 0,
-                    criticalVulns: 0,
-                    highVulns: 0,
-                    mediumVulns: 0,
-                    lowVulns: 0,
+                    totalTargets,
+                    activeScans,
+                    criticalVulns: statsMap.critical,
+                    highVulns: statsMap.high,
+                    mediumVulns: statsMap.medium,
+                    lowVulns: statsMap.low,
                     securityScore,
                     profileCompletion,
                     lastLoginAt: user.lastLogin,

@@ -165,15 +165,33 @@ const Dashboard = () => {
     fetchStats();
   }, []);
   useEffect(() => {
-    setRealtimeEvents(getDashboardEvents());
+    const fetchEvents = async () => {
+      try {
+        const res = await api.get('/user/dashboard-events');
+        if (res.data.success) {
+          setRealtimeEvents(res.data.data.events);
+        } else {
+          setRealtimeEvents(getDashboardEvents());
+        }
+      } catch {
+        setRealtimeEvents(getDashboardEvents());
+      }
+    };
+    fetchEvents();
 
     const onRealtimeUpdate = (ev) => {
       if (!ev?.detail) return;
-      setRealtimeEvents((prev) => [ev.detail, ...prev].slice(0, 100));
+      setRealtimeEvents((prev) => {
+        // Prevent duplicate events if they were already fetched from history
+        if (prev.some(p => p.id === ev.detail.id)) return prev;
+        return [ev.detail, ...prev].slice(0, 100);
+      });
     };
 
     const onStorage = (ev) => {
       if (ev.key !== 'paia_dashboard_events_v1') return;
+      // When storage changes, we might want to refresh from backend or merge
+      // For now, simple re-sync with localStorage if backend fails
       setRealtimeEvents(getDashboardEvents());
     };
 
