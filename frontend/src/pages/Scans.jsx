@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import Layout from '../components/layout';
 import AutoReconPanel from '../components/AutoReconPanel';
+import { DASHBOARD_UPDATE_EVENT, getDashboardEvents, publishDashboardEvent } from '../utils/dashboardRealtime';
 
 const scanFlowSteps = [
   { label: 'Recon', icon: Search, phase: 'recon' },
@@ -123,8 +124,9 @@ const TerminalUI = () => {
 
 const Scans = () => {
   const [activePhase, setActivePhase] = useState('idle');
+  const [realtimeEvents, setRealtimeEvents] = useState([]);
 
-  // Simulate scan phase progression
+  // Simulate scan phase progression and publish events
   useEffect(() => {
     const phases = ['recon', 'scan', 'analyze', 'report'];
     let idx = 0;
@@ -134,10 +136,48 @@ const Scans = () => {
         idx++;
       } else {
         clearInterval(timer);
+        // Publish scan completion event
+        publishDashboardEvent({
+          source: 'scan-center',
+          title: 'Scan completed for example.com',
+          target: 'example.com',
+          severity: 'info',
+          riskScore: 78,
+          meta: '4 findings, risk score: 78/100',
+        });
       }
     }, 3500);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setRealtimeEvents(getDashboardEvents());
+
+    const onRealtimeUpdate = (ev) => {
+      if (!ev?.detail) return;
+      setRealtimeEvents((prev) => [ev.detail, ...prev].slice(0, 100));
+    };
+
+    const onStorage = (ev) => {
+      if (ev.key !== 'paia_dashboard_events_v1') return;
+      setRealtimeEvents(getDashboardEvents());
+    };
+
+    window.addEventListener(DASHBOARD_UPDATE_EVENT, onRealtimeUpdate);
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      window.removeEventListener(DASHBOARD_UPDATE_EVENT, onRealtimeUpdate);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  // Compute stats from realtimeEvents
+  const scanEvents = realtimeEvents.filter(event => event.source === 'scan-center');
+  const lastScan = scanEvents[0] || null;
+  const totalScans = scanEvents.length;
+  const criticalFindings = realtimeEvents.filter(event => event.severity === 'critical').length;
+  const avgScanTime = '3m 24s'; // Placeholder, could compute if events have duration
 
   return (
     <Layout>
@@ -170,10 +210,10 @@ const Scans = () => {
             }}>
               <div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>LAST SCAN</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>example.com</div>
+                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{lastScan?.target || 'example.com'}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--green)' }}>78</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--green)' }}>{lastScan?.riskScore || 78}</div>
                 <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700 }}>RISK SCORE</div>
               </div>
             </div>
@@ -185,10 +225,10 @@ const Scans = () => {
             }}>
               <div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>TOTAL SCANS</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>24 scans completed</div>
+                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{totalScans || 24} scans completed</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--indigo-l)' }}>24</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--indigo-l)' }}>{totalScans || 24}</div>
                 <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700 }}>TOTAL</div>
               </div>
             </div>
@@ -200,10 +240,10 @@ const Scans = () => {
             }}>
               <div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>CRITICAL FINDINGS</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>2 critical vulnerabilities</div>
+                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{criticalFindings || 2} critical vulnerabilities</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--red)' }}>2</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--red)' }}>{criticalFindings || 2}</div>
                 <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700 }}>CRITICAL</div>
               </div>
             </div>
