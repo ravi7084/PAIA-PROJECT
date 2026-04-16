@@ -13,6 +13,7 @@ const logger = require('../utils/logger');
 
 // Define binary paths
 const LOCAL_NMAP = path.join(__dirname, '../bin/nmap/nmap.exe');
+const WINDOWS_NMAP = "C:\\Program Files (x86)\\Nmap\\nmap.exe";
 let NMAP_BIN = 'nmap'; // Default to system PATH
 
 /**
@@ -22,13 +23,17 @@ let NMAP_BIN = 'nmap'; // Default to system PATH
  */
 const runNetworkScan = async (target) => {
   try {
-    // 1. Check if Nmap is installed (System or Local)
+    // 1. Check if Nmap is installed (System, Local, or Windows Default)
     let isInstalled = false;
     
     if (fs.existsSync(LOCAL_NMAP)) {
       NMAP_BIN = LOCAL_NMAP;
       isInstalled = true;
-      logger.info(`Using local Nmap: ${NMAP_BIN}`);
+      logger.info(`Using local Nmap ZIP: ${NMAP_BIN}`);
+    } else if (fs.existsSync(WINDOWS_NMAP)) {
+      NMAP_BIN = WINDOWS_NMAP;
+      isInstalled = true;
+      logger.info(`Using Windows default Nmap: ${NMAP_BIN}`);
     } else {
       try {
         await runCommand('nmap --version');
