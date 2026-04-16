@@ -19,7 +19,9 @@ import {
   runReconAuto,
   listRecentRecon,
   getReconScanById,
-  deleteReconScanById
+  deleteReconScanById,
+  runSubdomainDNS,
+  listRecentSubdomainDNS
 } from '../api/recon.api';
 import { publishDashboardEvent } from '../utils/dashboardRealtime';
 
@@ -90,6 +92,7 @@ const AutoReconPanel = () => {
   const [stage, setStage] = useState('');
   const [latest, setLatest] = useState(null);
   const [recent, setRecent] = useState([]);
+  const [recentSubdomainResults, setRecentSubdomainResults] = useState([]);
   const [scanId, setScanId] = useState('');
   const [liveToolStatus, setLiveToolStatus] = useState({});
   const [expanded, setExpanded] = useState({});
@@ -105,6 +108,10 @@ const AutoReconPanel = () => {
     try {
       const scans = await listRecentRecon();
       setRecent(scans.slice(0, 20));
+
+      // Also refresh Subdomain/DNS history
+      const subResults = await listRecentSubdomainDNS();
+      setRecentSubdomainResults(subResults);
     } catch {
       setRecent([]);
     }
@@ -300,6 +307,49 @@ const AutoReconPanel = () => {
       return;
     }
 
+    if (selectedPhase === 'subdomain') {
+      setLoading(true);
+      setStage('Running Subdomain Enumeration & DNS Analysis...');
+      try {
+        const res = await runSubdomainDNS(v.target);
+        if (res.success) {
+          toast.success(`Found ${res.total} subdomains with DNS records`);
+          const syntheticScan = {
+            target: v.target,
+            status: 'completed',
+            phase: 'subdomain',
+            toolResults: res.data.map(item => ({
+              tool: 'amass/dns',
+              status: 'success',
+              indicators: {
+                subdomains: [item.subdomain],
+                dnsRecords: { A: item.A, MX: item.MX, TXT: item.TXT }
+              }
+            })),
+            summary: {
+              subdomains: res.data.map(i => i.subdomain),
+              dnsRecords: {
+                A: [...new Set(res.data.flatMap(i => i.A))],
+                MX: [...new Set(res.data.flatMap(i => i.MX))],
+                TXT: [...new Set(res.data.flatMap(i => i.TXT))]
+              }
+            },
+            verdict: { level: 'low', score: Math.min(100, res.total * 2), label: 'Subdomain discovery complete' }
+          };
+          setLatest(syntheticScan);
+          refreshRecent();
+        } else {
+          toast.error(res.message || 'Scan failed');
+        }
+      } catch (err) {
+        toast.error(err?.response?.data?.message || 'Subdomain scan failed');
+      } finally {
+        setLoading(false);
+        setStage('');
+      }
+      return;
+    }
+
     const baseTools = TOOL_SETS[selectedPhase] || TOOL_SETS.recon;
     const toolsToRun = Array.isArray(specificTools) && specificTools.length ? specificTools : baseTools;
 
@@ -390,6 +440,34 @@ const AutoReconPanel = () => {
       .slice(0, 8);
   }, [recent, selectedPhase]);
 
+  const filteredSubdomainRecent = useMemo(() => {
+    // If domain filter is needed, we could add a state for it
+    return recentSubdomainResults.slice(0, 8);
+  }, [recentSubdomainResults]);
+
+  const handleSelectRecentSubdomain = (res) => {
+    // Reconstruct a latest scan object from the historical result
+    const syntheticScan = {
+      target: res.domain,
+      status: 'completed',
+      phase: 'subdomain',
+      toolResults: [{
+        tool: 'amass/dns',
+        status: 'success',
+        indicators: {
+          subdomains: [res.subdomain],
+          dnsRecords: { A: res.A, MX: res.MX, TXT: res.TXT }
+        }
+      }],
+      summary: {
+        subdomains: [res.subdomain],
+        dnsRecords: { A: res.A, MX: res.MX, TXT: res.TXT }
+      },
+      verdict: { level: 'low', score: 20, label: 'Historical DNS result' }
+    };
+    setLatest(syntheticScan);
+  };
+
   return (
     <div style={box}>
       <div className="card-title" style={{ marginBottom: 10 }}>
@@ -398,70 +476,25 @@ const AutoReconPanel = () => {
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        <button
-          onClick={() => setSelectedPhase('recon')}
-          disabled={loading}
-          style={{
-            border: selectedPhase === 'recon' ? '1px solid rgba(99,102,241,0.5)' : '1px solid var(--border2)',
-            borderRadius: 8,
-            padding: '7px 12px',
-            background: selectedPhase === 'recon' ? 'rgba(99,102,241,0.16)' : 'transparent',
-            color: selectedPhase === 'recon' ? 'var(--indigo-l)' : 'var(--text2)',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontSize: 12,
-            fontWeight: 700
-          }}
-        >
-          Recon
-        </button>
-        <button
-          onClick={() => setSelectedPhase('subdomain')}
-          disabled={loading}
-          style={{
-            border: selectedPhase === 'subdomain' ? '1px solid rgba(99,102,241,0.5)' : '1px solid var(--border2)',
-            borderRadius: 8,
-            padding: '7px 12px',
-            background: selectedPhase === 'subdomain' ? 'rgba(99,102,241,0.16)' : 'transparent',
-            color: selectedPhase === 'subdomain' ? 'var(--indigo-l)' : 'var(--text2)',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontSize: 12,
-            fontWeight: 700
-          }}
-        >
-          Subdomain/DNS
-        </button>
-        <button
-          onClick={() => setSelectedPhase('network')}
-          disabled={loading}
-          style={{
-            border: selectedPhase === 'network' ? '1px solid rgba(99,102,241,0.5)' : '1px solid var(--border2)',
-            borderRadius: 8,
-            padding: '7px 12px',
-            background: selectedPhase === 'network' ? 'rgba(99,102,241,0.16)' : 'transparent',
-            color: selectedPhase === 'network' ? 'var(--indigo-l)' : 'var(--text2)',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontSize: 12,
-            fontWeight: 700
-          }}
-        >
-          Network Scan
-        </button>
-        <button
-          onClick={() => setSelectedPhase('webapp')}
-          disabled={loading}
-          style={{
-            border: selectedPhase === 'webapp' ? '1px solid rgba(99,102,241,0.5)' : '1px solid var(--border2)',
-            borderRadius: 8,
-            padding: '7px 12px',
-            background: selectedPhase === 'webapp' ? 'rgba(99,102,241,0.16)' : 'transparent',
-            color: selectedPhase === 'webapp' ? 'var(--indigo-l)' : 'var(--text2)',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            fontSize: 12,
-            fontWeight: 700
-          }}
-        >
-          Web App Vuln
-        </button>
+        {Object.keys(PHASE_LABELS).map((phase) => (
+          <button
+            key={phase}
+            onClick={() => setSelectedPhase(phase)}
+            disabled={loading}
+            style={{
+              border: selectedPhase === phase ? '1px solid rgba(99,102,241,0.5)' : '1px solid var(--border2)',
+              borderRadius: 8,
+              padding: '7px 12px',
+              background: selectedPhase === phase ? 'rgba(99,102,241,0.16)' : 'transparent',
+              color: selectedPhase === phase ? 'var(--indigo-l)' : 'var(--text2)',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              fontSize: 12,
+              fontWeight: 700
+            }}
+          >
+            {phase === 'subdomain' ? 'Subdomain/DNS' : phase.charAt(0).toUpperCase() + phase.slice(1)}
+          </button>
+        ))}
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -490,7 +523,7 @@ const AutoReconPanel = () => {
             opacity: loading ? 0.7 : 1
           }}
         >
-          {loading ? <Loader2 size={14} /> : <Play size={13} />}
+          {loading ? <Loader2 size={14} className="spin" /> : <Play size={13} />}
           {loading ? 'Running...' : selectedPhase === 'network' ? 'Start Network Scan' : selectedPhase === 'subdomain' ? 'Start Subdomain Scan' : selectedPhase === 'webapp' ? 'Start Web Scan' : 'Start Recon'}
         </button>
         <button
@@ -543,26 +576,28 @@ const AutoReconPanel = () => {
         </div>
       )}
 
+      {selectedPhase !== 'subdomain' && (
       <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         {Object.keys(liveToolStatus).map((tool) => {
           const chip = chipStyles(liveToolStatus[tool]);
           return (
-          <span
-            key={tool}
-            style={{
-              fontSize: 10,
-              padding: '3px 8px',
-              borderRadius: 999,
-              border: chip.border,
-              color: chip.color,
-              background: chip.background
-            }}
-          >
-            {tool}: {liveToolStatus[tool]}
-          </span>
+            <span
+              key={tool}
+              style={{
+                fontSize: 10,
+                padding: '3px 8px',
+                borderRadius: 999,
+                border: chip.border,
+                color: chip.color,
+                background: chip.background
+              }}
+            >
+              {tool}: {liveToolStatus[tool]}
+            </span>
           );
         })}
       </div>
+      )}
 
       {latest && (
         <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
@@ -601,33 +636,10 @@ const AutoReconPanel = () => {
                       color: 'var(--text2)',
                       background: 'rgba(255,255,255,0.03)'
                     }}
-                    title={`source=${f.source}, severity=${f.severity}, confidence=${f.confidence}`}
                   >
                     {f.type}:{f.value}
                   </span>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {(latest?.summary?.network?.openPorts?.length > 0 || latest?.summary?.network?.services?.length > 0 || latest?.summary?.network?.vulnerabilities?.length > 0) && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Network Summary</div>
-              <div style={{ fontSize: 10, color: 'var(--text2)' }}>
-                <div>Open Ports: {(latest.summary.network.openPorts || []).slice(0, 15).join(', ') || '-'}</div>
-                <div style={{ marginTop: 4 }}>Services: {(latest.summary.network.services || []).slice(0, 15).join(', ') || '-'}</div>
-                <div style={{ marginTop: 4 }}>Vulnerabilities: {(latest.summary.network.vulnerabilities || []).slice(0, 10).join(', ') || '-'}</div>
-              </div>
-            </div>
-          )}
-
-          {(latest?.summary?.webapp?.urls?.length > 0 || latest?.summary?.webapp?.vulnerabilities?.length > 0 || latest?.summary?.webapp?.owaspTop10?.length > 0) && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Web App Summary</div>
-              <div style={{ fontSize: 10, color: 'var(--text2)' }}>
-                <div>URLs: {(latest.summary.webapp.urls || []).slice(0, 10).join(', ') || '-'}</div>
-                <div style={{ marginTop: 4 }}>OWASP: {(latest.summary.webapp.owaspTop10 || []).slice(0, 6).join(', ') || '-'}</div>
-                <div style={{ marginTop: 4 }}>Vulnerabilities: {(latest.summary.webapp.vulnerabilities || []).slice(0, 10).join(', ') || '-'}</div>
               </div>
             </div>
           )}
@@ -662,19 +674,18 @@ const AutoReconPanel = () => {
                   </div>
                   {open && (
                     <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text2)' }}>
-                      <div>Domains: {(t.indicators?.domains || []).slice(0, 8).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>Subdomains: {(t.indicators?.subdomains || []).slice(0, 8).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>Emails: {(t.indicators?.emails || []).slice(0, 8).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>IPs: {(t.indicators?.ips || []).slice(0, 8).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>Open Ports: {(t.indicators?.openPorts || []).slice(0, 15).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>Services: {(t.indicators?.services || []).slice(0, 10).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>Vulns: {(t.indicators?.vulnerabilities || []).slice(0, 6).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>URLs: {(t.indicators?.urls || []).slice(0, 6).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>OWASP: {(t.indicators?.owaspTop10 || []).slice(0, 5).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>NS: {(t.indicators?.dnsRecords?.ns || []).slice(0, 6).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>MX: {(t.indicators?.dnsRecords?.mx || []).slice(0, 6).join(', ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>TXT: {(t.indicators?.dnsRecords?.txt || []).slice(0, 3).join(' | ') || '-'}</div>
-                      <div style={{ marginTop: 4 }}>CNAME: {(t.indicators?.dnsRecords?.cname || []).slice(0, 6).join(', ') || '-'}</div>
+                      {(t.indicators?.subdomains || []).length > 0 && (
+                        <div style={{ marginTop: 4 }}>Subdomains: {(t.indicators?.subdomains || []).slice(0, 50).join(', ')}</div>
+                      )}
+                      {(t.indicators?.dnsRecords?.A || []).length > 0 && (
+                        <div style={{ marginTop: 4 }}>A Records: {t.indicators.dnsRecords.A.join(', ')}</div>
+                      )}
+                      {(t.indicators?.dnsRecords?.MX || []).length > 0 && (
+                        <div style={{ marginTop: 4 }}>MX Records: {t.indicators.dnsRecords.MX.slice(0, 3).join(', ')}</div>
+                      )}
+                      {(t.indicators?.dnsRecords?.TXT || []).length > 0 && (
+                        <div style={{ marginTop: 4 }}>TXT Records: {t.indicators.dnsRecords.TXT.slice(0, 2).join(' | ')}</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -684,53 +695,74 @@ const AutoReconPanel = () => {
         </div>
       )}
 
-      {recent.length > 0 && (
-        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
-            Recent Runs - {PHASE_LABELS[selectedPhase]} ({filteredRecent.length})
-          </div>
-          {filteredRecent.length === 0 && (
-            <div style={{ fontSize: 10, color: 'var(--text3)' }}>No recent scans for this module</div>
-          )}
-          {filteredRecent.map((r) => (
-            <div
-              key={r._id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 11,
-                padding: '6px 0',
-                borderBottom: '1px solid rgba(255,255,255,0.04)'
-              }}
-            >
-              <span style={{ color: 'var(--text2)' }}>{r.target}</span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ color: toolColor(r.status), display: 'inline-flex', alignItems: 'center' }}>
-                  {r.status === 'completed' ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-                </span>
-                <button
-                  onClick={() => handleDeleteRecent(r._id)}
-                  disabled={deletingScanId === r._id}
-                  title="Delete scan"
+      <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
+          Recent Runs - {PHASE_LABELS[selectedPhase]}
+        </div>
+        
+        {selectedPhase === 'subdomain' ? (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {filteredSubdomainRecent.length === 0 ? (
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>No recent scans for this module</div>
+            ) : (
+              filteredSubdomainRecent.map((r, i) => (
+                <div
+                  key={`${r._id}-${i}`}
+                  onClick={() => handleSelectRecentSubdomain(r)}
                   style={{
-                    border: '1px solid var(--border2)',
-                    background: 'transparent',
-                    color: deletingScanId === r._id ? 'var(--text3)' : 'var(--red)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    padding: '6px 8px',
                     borderRadius: 6,
-                    padding: 3,
-                    cursor: deletingScanId === r._id ? 'not-allowed' : 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
+                    cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid var(--border)'
                   }}
                 >
-                  <Trash2 size={11} />
-                </button>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+                  <span style={{ color: 'var(--text2)' }}>{r.subdomain}</span>
+                  <span style={{ color: 'var(--text3)', fontSize: 9 }}>{new Date(r.timestamp).toLocaleDateString()}</span>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {filteredRecent.length === 0 ? (
+              <div style={{ fontSize: 10, color: 'var(--text3)' }}>No recent scans for this module</div>
+            ) : (
+              filteredRecent.map((r) => (
+                <div
+                  key={r._id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    padding: '6px 8px',
+                    borderRadius: 6,
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid var(--border)'
+                  }}
+                >
+                  <span style={{ color: 'var(--text2)' }}>{r.target}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: toolColor(r.status), display: 'inline-flex', alignItems: 'center' }}>
+                      {r.status === 'completed' ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteRecent(r._id)}
+                      disabled={deletingScanId === r._id}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--red)', cursor: 'pointer' }}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

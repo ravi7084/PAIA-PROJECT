@@ -66,7 +66,8 @@ app.use(passport.initialize());
 //  ROUTES
 // ─────────────────────────────────────────────────
 
-app.use('/api/recon', require('./routes/recon.routes')); //reconaissance routes
+app.use('/api/recon', require('./routes/recon.routes')); // Original recon routes
+app.use('/api/recon', require('./routes/reconRoutes')); // New Subdomain/DNS module
 
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/user', require('./routes/user.routes'));

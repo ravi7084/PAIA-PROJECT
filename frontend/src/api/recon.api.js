@@ -67,6 +67,19 @@ export const getReconScanById = async (scanId) => {
   return res.data?.data?.scan || null;
 };
 
+export const runSubdomainDNS = async (target) => {
+  const res = await api.post('/recon', { domain: target });
+  return res.data;
+};
+
+export const listRecentSubdomainDNS = async (domain = '') => {
+  // Note: We'll need a backend route for this. I'll add one if needed.
+  // For now, we hit the discovery endpoint and let it return data.
+  // Actually, I'll create a GET route for recent results in the backend.
+  const res = await api.get('/recon/subdomain/recent', { params: { domain } });
+  return res.data?.data || [];
+};
+
 export const deleteReconScanById = async (scanId) => {
   const res = await api.delete(`/recon/${scanId}`);
   return res.data?.data || null;
