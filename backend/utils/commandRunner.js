@@ -12,28 +12,50 @@ const logger = require('./logger');
  * Runs a CLI command using spawn for better path handling (especially Windows spaces).
  * @param {string} cmd - The executable name or path.
  * @param {string[]} args - Array of arguments.
+ * @param {Object} options - { timeout, stopCondition }
  * @returns {Promise<string>} - Resolution with stdout.
  */
-const runExecutable = (cmd, args) => {
+const runExecutable = (cmd, args, options = {}) => {
+  const { timeout: timeoutMs = 5 * 60 * 1000, stopCondition = null } = options;
+
   return new Promise((resolve, reject) => {
     logger.info(`Spawning: ${cmd} ${args.join(' ')}`);
     const child = spawn(cmd, args, { maxBuffer: 10 * 1024 * 1024 });
     let stdout = '';
     let stderr = '';
+    let isFinished = false;
 
-    // Set a 5-minute timeout (300,000 ms)
-    const timeout = setTimeout(() => {
-      logger.warn(`Process timed out after 5 minutes: ${cmd}`);
-      child.kill('SIGKILL');
-      // Resolve with what we have so far instead of rejecting
+    const cleanupAndResolve = (code = 0) => {
+      if (isFinished) return;
+      isFinished = true;
+      clearTimeout(timeout);
       resolve(stdout);
-    }, 5 * 60 * 1000);
+    };
 
-    child.stdout.on('data', (data) => { stdout += data; });
+    // Set timeout
+    const timeout = setTimeout(() => {
+      logger.warn(`Process timed out after ${timeoutMs / 60000} minutes: ${cmd}`);
+      child.kill('SIGKILL');
+      cleanupAndResolve();
+    }, timeoutMs);
+
+    child.stdout.on('data', (data) => { 
+      stdout += data; 
+      // Check stop condition in real-time
+      if (stopCondition && stopCondition(stdout)) {
+        logger.info(`Stop condition met for ${cmd}. Killing process early.`);
+        child.kill('SIGKILL');
+        cleanupAndResolve();
+      }
+    });
+
     child.stderr.on('data', (data) => { stderr += data; });
 
     child.on('close', (code) => {
+      if (isFinished) return;
+      isFinished = true;
       clearTimeout(timeout);
+
       if (code !== 0 && code !== null) {
         logger.error(`Process exited with code ${code}. Stderr: ${stderr}`);
         return reject(new Error(stderr || `Process exited with code ${code}`));
@@ -42,6 +64,8 @@ const runExecutable = (cmd, args) => {
     });
 
     child.on('error', (err) => {
+      if (isFinished) return;
+      isFinished = true;
       clearTimeout(timeout);
       logger.error(`Spawn error: ${err.message}`);
       reject(err);

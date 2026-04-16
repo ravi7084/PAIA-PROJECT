@@ -47,7 +47,10 @@ const runRecon = async (domain) => {
     // 2. Run Subdomain Enumeration
     logger.info(`Starting Subdomain Enumeration for: ${domain}`);
     // Use runExecutable with array to handle spaces in path safely
-    const amassOutput = await runExecutable(AMASS_BIN, ['enum', '-passive', '-d', domain]);
+    // Optimization: Stop once we have 50 subdomains to save time
+    const amassOutput = await runExecutable(AMASS_BIN, ['enum', '-passive', '-d', domain], {
+      stopCondition: (out) => (out.match(/\n/g) || []).length >= 50
+    });
     
     // 3. Parse and deduplicate subdomains
     let subdomains = (amassOutput || '')
