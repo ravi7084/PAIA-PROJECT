@@ -17,8 +17,6 @@ const NIKTO_BASE = path.join(__dirname, '../bin/nikto');
 const NIKTO_PL = path.join(NIKTO_BASE, 'program', 'nikto.pl');
 const WINDOWS_PERL = "C:\\Strawberry\\perl\\bin\\perl.exe";
 
-const WINDOWS_PERL = "C:\\Strawberry\\perl\\bin\\perl.exe";
-
 /**
  * Executes a Nikto scan.
  */
