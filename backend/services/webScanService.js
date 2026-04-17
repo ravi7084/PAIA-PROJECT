@@ -18,7 +18,8 @@ const NIKTO_PL = path.join(NIKTO_BASE, 'program', 'nikto.pl');
 const WINDOWS_PERL = "C:\\Strawberry\\perl\\bin\\perl.exe";
 
 // ZAP API Configuration (Default: Port 8080)
-const ZAP_BASE_URL = process.env.ZAP_API_URL || 'http://localhost:8080';
+const ZAP_BASE_URL = process.env.ZAP_API_URL || 'http://127.0.0.1:8080';
+const ZAP_API_KEY = process.env.ZAP_API_KEY || '';
 
 /**
  * Executes a Nikto scan.
@@ -54,14 +55,21 @@ const performNiktoScan = async (target, advanced = false) => {
     logger.info(`Starting Nikto scan for: ${target}`);
     
     // Command: perl nikto.pl -h <target>
-    // -Tuning: 123456789abc (Advanced modes)
-    const args = ['-h', target];
+    // -ssl: Force SSL mode for https targets
+    // -nointeractive: Prevent hanging on prompts
+    // -max-error 0: Keep scanning even if some SSL handshakes fail
+    const args = ['-h', target, '-nointeractive', '-max-error', '0'];
+    
+    if (target.toLowerCase().startsWith('https')) {
+      args.push('-ssl');
+    }
+
     if (advanced) {
-      args.push('-Tuning', '1,2,3,4,b,c,x'); // Advanced checks
+      args.push('-Tuning', '1,2,3,4,5,b,c'); // Better balanced tuning
     }
 
     const output = await runExecutable(perlBin, [NIKTO_PL, ...args], {
-      timeout: 5 * 60 * 1000 // 5 minute timeout
+      timeout: 10 * 60 * 1000 // Increased to 10 minutes
     });
 
     return output;
@@ -82,7 +90,14 @@ const performZapScan = async (target) => {
     // We'll try to trigger an active scan if ZAP is available
     try {
       await axios.get(`${ZAP_BASE_URL}/JSON/ascan/action/scan/`, {
-        params: { url: target, recurse: 'true' }
+        params: { 
+          url: target, 
+          recurse: 'true',
+          apikey: ZAP_API_KEY
+        },
+        headers: {
+          'X-ZAP-API-Key': ZAP_API_KEY
+        }
       });
       logger.info(`ZAP scan triggered for ${target}`);
     } catch (err) {
@@ -90,13 +105,24 @@ const performZapScan = async (target) => {
     }
 
     // 2. Fetch Alerts
-    const response = await axios.get(`${ZAP_BASE_URL}/JSON/ascan/view/alerts/`, {
-      params: { baseurl: target }
+    // Note: ZAP alerts are typically accessed via 'alert/view/alerts' or 'core/view/alerts'
+    const response = await axios.get(`${ZAP_BASE_URL}/JSON/alert/view/alerts/`, {
+      params: { 
+        baseurl: target,
+        apikey: ZAP_API_KEY
+      },
+      headers: {
+        'X-ZAP-API-Key': ZAP_API_KEY
+      }
     });
 
     return response.data?.alerts || [];
   } catch (err) {
-    logger.error(`ZAP API error: ${err.message}`);
+    if (err.response) {
+      logger.error(`ZAP API Error [${err.response.status}]: ${JSON.stringify(err.response.data)}`);
+    } else {
+      logger.error(`ZAP Connection Error: ${err.message}`);
+    }
     return []; // Return empty array if ZAP is unreachable
   }
 };
