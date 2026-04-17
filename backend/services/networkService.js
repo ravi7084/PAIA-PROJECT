@@ -8,7 +8,7 @@
 const path = require('path');
 const fs = require('fs');
 const NetworkResult = require('../models/NetworkResult');
-const { runCommand, runExecutable } = require('../utils/commandRunner');
+const { runCommand, runExecutable, runRemoteExecutable } = require('../utils/commandRunner');
 const logger = require('../utils/logger');
 
 // Define binary paths
@@ -23,29 +23,30 @@ let NMAP_BIN = 'nmap'; // Default to system PATH
  */
 const runNetworkScan = async (target) => {
   try {
-    // 1. Check if Nmap is installed (System, Local, or Windows Default)
-    let isInstalled = false;
-    
-    if (fs.existsSync(LOCAL_NMAP)) {
-      NMAP_BIN = LOCAL_NMAP;
-      isInstalled = true;
-      logger.info(`Using local Nmap ZIP: ${NMAP_BIN}`);
-    } else if (fs.existsSync(WINDOWS_NMAP)) {
-      NMAP_BIN = WINDOWS_NMAP;
-      isInstalled = true;
-      logger.info(`Using Windows default Nmap: ${NMAP_BIN}`);
-    } else {
-      try {
-        await runCommand('nmap --version');
-        NMAP_BIN = 'nmap';
+    if (process.env.REMOTE_SCANNER_ENABLED !== 'true') {
+      if (fs.existsSync(LOCAL_NMAP)) {
+        NMAP_BIN = LOCAL_NMAP;
         isInstalled = true;
-      } catch (err) {
-        // Not in system path
+        logger.info(`Using local Nmap ZIP: ${NMAP_BIN}`);
+      } else if (fs.existsSync(WINDOWS_NMAP)) {
+        NMAP_BIN = WINDOWS_NMAP;
+        isInstalled = true;
+        logger.info(`Using Windows default Nmap: ${NMAP_BIN}`);
+      } else {
+        try {
+          await runCommand('nmap --version');
+          NMAP_BIN = 'nmap';
+          isInstalled = true;
+        } catch (err) {
+          // Not in system path
+        }
       }
-    }
 
-    if (!isInstalled) {
-      throw new Error('Nmap is not installed. Please install Nmap from https://nmap.org/download.html to use this module.');
+      if (!isInstalled) {
+        throw new Error('Nmap is not installed. Please install Nmap from https://nmap.org/download.html to use this module.');
+      }
+    } else {
+      isInstalled = true; // Remote scan handles its own dependencies
     }
 
     // 2. Run Nmap scan
@@ -53,8 +54,8 @@ const runNetworkScan = async (target) => {
     // Scanning top 1000 ports is the default when -p- is omitted.
     logger.info(`Starting Network Scan for: ${target}`);
     
-    // Using runExecutable to handle possible spaces in path and provide a timeout
-    const nmapOutput = await runExecutable(NMAP_BIN, ['-A', '-v', target], {
+    // Using runRemoteExecutable to support Kali VM scanning
+    const nmapOutput = await runRemoteExecutable(NMAP_BIN, ['-A', '-v', target], {
         timeout: 10 * 60 * 1000 // 10 minute timeout for Nmap
     });
 

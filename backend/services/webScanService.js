@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const WebScanResult = require('../models/WebScanResult');
-const { runExecutable, runCommand } = require('../utils/commandRunner');
+const { runExecutable, runCommand, runRemoteExecutable } = require('../utils/commandRunner');
 const logger = require('../utils/logger');
 
 // Paths
@@ -26,26 +26,30 @@ const performNiktoScan = async (target, advanced = false) => {
     // 1. Check for Perl (System or Windows Default)
     let isPerlInstalled = false;
     
-    if (fs.existsSync(WINDOWS_PERL)) {
-      perlBin = WINDOWS_PERL;
-      isPerlInstalled = true;
-      logger.info(`Using Windows default Perl: ${perlBin}`);
-    } else {
-      try {
-        await runCommand('perl -v');
+    if (process.env.REMOTE_SCANNER_ENABLED !== 'true') {
+      if (fs.existsSync(WINDOWS_PERL)) {
+        perlBin = WINDOWS_PERL;
         isPerlInstalled = true;
-      } catch (err) {
-        // Not in system path
+        logger.info(`Using Windows default Perl: ${perlBin}`);
+      } else {
+        try {
+          await runCommand('perl -v');
+          isPerlInstalled = true;
+        } catch (err) {
+          // Not in system path
+        }
       }
-    }
 
-    if (!isPerlInstalled) {
-      throw new Error('Perl is not installed. Nikto scan requires a Perl interpreter (e.g., Strawberry Perl).');
-    }
+      if (!isPerlInstalled) {
+        throw new Error('Perl is not installed. Nikto scan requires a Perl interpreter (e.g., Strawberry Perl).');
+      }
 
-    // 2. Check for Nikto
-    if (!fs.existsSync(NIKTO_PL)) {
-      throw new Error('Nikto not found. Please run the setup script to download Nikto.');
+      // 2. Check for Nikto
+      if (!fs.existsSync(NIKTO_PL)) {
+        throw new Error('Nikto not found. Please run the setup script to download Nikto.');
+      }
+    } else {
+      isPerlInstalled = true; // Remote scan handles its own dependencies
     }
 
     logger.info(`Starting Nikto scan for: ${target}`);
@@ -64,7 +68,7 @@ const performNiktoScan = async (target, advanced = false) => {
       args.push('-Tuning', '1,2,3,4,5,b,c'); // Better balanced tuning
     }
 
-    const output = await runExecutable(perlBin, [NIKTO_PL, ...args], {
+    const output = await runRemoteExecutable(perlBin === 'perl' ? 'nikto' : NIKTO_PL, args, {
       timeout: 10 * 60 * 1000 // Increased to 10 minutes
     });
 

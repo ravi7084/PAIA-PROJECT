@@ -74,6 +74,50 @@ const runExecutable = (cmd, args, options = {}) => {
 };
 
 /**
+ * Executes a command remotely via SSH if enabled, otherwise locally.
+ * @param {string} cmd - Executable name or path
+ * @param {string[]} args - Arguments
+ * @param {Object} options - Standard runExecutable options
+ */
+const runRemoteExecutable = (cmd, args, options = {}) => {
+  const isRemote = process.env.REMOTE_SCANNER_ENABLED === 'true';
+  const remoteIp = process.env.REMOTE_SCANNER_IP;
+  const remoteUser = process.env.REMOTE_SCANNER_USER || 'kali';
+
+  if (isRemote && remoteIp) {
+    // Wrap IPv6 addresses in brackets if they contain colons and aren't already wrapped
+    let formattedIp = remoteIp;
+    if (remoteIp.includes(':') && !remoteIp.startsWith('[') && !remoteIp.endsWith(']')) {
+      formattedIp = `[${remoteIp}]`;
+    }
+
+    // If it's a full Windows path, extract just the binary name for Linux
+    // e.g. "C:\\...\\nikto.pl" -> "nikto"
+    let cleanCmd = cmd;
+    if (cmd.includes('\\') || cmd.includes('/')) {
+      cleanCmd = path.basename(cmd).replace('.exe', '').replace('.pl', '');
+    }
+
+    const remoteCmdStr = `${cleanCmd} ${args.join(' ')}`;
+    logger.info(`⚡ [Remote Phase] Routing to Kali [${remoteUser}@${remoteIp}]: ${remoteCmdStr}`);
+    
+    // Windows native 'ssh' executable
+    const sshArgs = [
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      '-o', 'StrictHostKeyChecking=no', // Avoid manual confirmation prompts
+      `${remoteUser}@${formattedIp}`,
+      remoteCmdStr
+    ];
+    
+    return runExecutable('ssh', sshArgs, options);
+  }
+
+  // Fallback to local Windows execution
+  return runExecutable(cmd, args, options);
+};
+
+/**
  * Runs a CLI command and returns stdout as a Promise.
  */
 const runCommand = (command) => {
@@ -96,4 +140,4 @@ const runCommand = (command) => {
   });
 };
 
-module.exports = { runCommand, runExecutable };
+module.exports = { runCommand, runExecutable, runRemoteExecutable };
