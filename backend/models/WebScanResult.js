@@ -1,7 +1,7 @@
 /**
  * ╔══════════════════════════════════════════════╗
  * ║   PAIA — Web Scan Result Model               ║
- * ║   Stores Nikto and ZAP Analysis Results      ║
+ * ║   Stores Nikto Analysis Results              ║
  * ╚══════════════════════════════════════════════╝
  */
 
@@ -16,10 +16,6 @@ const webScanResultSchema = new mongoose.Schema({
   niktoOutput: {
     type: String,
     default: '',
-  },
-  zapAlerts: {
-    type: [Object],
-    default: [],
   },
   status: {
     type: String,

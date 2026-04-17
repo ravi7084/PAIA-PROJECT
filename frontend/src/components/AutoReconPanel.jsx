@@ -79,7 +79,7 @@ const TOOL_SETS = {
   recon: ['theharvester', 'reconng', 'spiderfoot', 'maltego'],
   subdomain: ['subfinder', 'amass'],
   network: ['nmap', 'nessus'],
-  webapp: ['nikto', 'zap']
+  webapp: ['nikto']
 };
 
 const PHASE_LABELS = {
@@ -404,7 +404,7 @@ const AutoReconPanel = () => {
       }
       
       setLoading(true);
-      setStage('Running Web Vulnerability Scan (Nikto + ZAP)...');
+      setStage('Running Web Vulnerability Scan (Nikto)...');
       try {
         const res = await runWebScan(targetInput.trim(), { advanced: true });
         if (res.success) {
@@ -418,16 +418,11 @@ const AutoReconPanel = () => {
                 tool: 'nikto',
                 status: 'success',
                 output: res.nikto_result
-              },
-              {
-                tool: 'zap',
-                status: res.zap_result?.length > 0 ? 'success' : 'partial',
-                indicators: { zapAlerts: res.zap_result || [] }
               }
             ],
             verdict: { 
-              level: res.zap_result?.some(a => a.risk === 'High') ? 'high' : 'medium', 
-              score: Math.min(100, (res.zap_result?.length || 0) * 5 + 20), 
+              level: (res.nikto_result || '').toLowerCase().includes('vulnerability') ? 'high' : 'medium', 
+              score: 50, 
               label: 'Web app analysis complete' 
             }
           };
@@ -591,14 +586,14 @@ const AutoReconPanel = () => {
           output: res.niktoOutput
         },
         {
-          tool: 'zap',
-          status: res.zapAlerts?.length > 0 ? 'success' : 'partial',
-          indicators: { zapAlerts: res.zapAlerts || [] }
+          tool: 'nikto',
+          status: 'success',
+          output: res.niktoOutput
         }
       ],
       verdict: { 
-        level: res.zapAlerts?.some(a => a.risk === 'High') ? 'high' : 'medium', 
-        score: Math.min(100, (res.zapAlerts?.length || 0) * 5 + 20), 
+        level: 'medium', 
+        score: 40, 
         label: 'Historical Web Scan' 
       }
     };
@@ -704,7 +699,7 @@ const AutoReconPanel = () => {
       </div>
 
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
-        Enter target only. Current phase: {selectedPhase === 'network' ? 'Network Scan (Nmap/Nessus)' : selectedPhase === 'subdomain' ? 'Subdomain Enumeration & DNS Analysis' : selectedPhase === 'webapp' ? 'Web Application Vulnerability Scanning (Nikto/ZAP)' : 'Recon (OSINT tools)'}.
+        Enter target only. Current phase: {selectedPhase === 'network' ? 'Network Scan (Nmap/Nessus)' : selectedPhase === 'subdomain' ? 'Subdomain Enumeration & DNS Analysis' : selectedPhase === 'webapp' ? 'Web Application Vulnerability Scanning (Nikto)' : 'Recon (OSINT tools)'}.
       </div>
 
       {stage && (
@@ -823,41 +818,6 @@ const AutoReconPanel = () => {
                       )}
                       {(t.indicators?.dnsRecords?.TXT || []).length > 0 && (
                         <div style={{ marginTop: 4 }}>TXT Records: {t.indicators.dnsRecords.TXT.slice(0, 2).join(' | ')}</div>
-                      )}
-
-                      {/* ZAP Results - Table Format */}
-                      {(t.indicators?.zapAlerts || []).length > 0 && (
-                        <div style={{ marginTop: 8, overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
-                            <thead>
-                              <tr style={{ background: 'rgba(255,255,255,0.05)', textAlign: 'left' }}>
-                                <th style={{ padding: 4, border: '1px solid var(--border)' }}>Risk</th>
-                                <th style={{ padding: 4, border: '1px solid var(--border)' }}>Alert</th>
-                                <th style={{ padding: 4, border: '1px solid var(--border)' }}>URL</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {t.indicators.zapAlerts.map((alert, idx) => (
-                                <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
-                                  <td style={{ 
-                                    padding: 4, 
-                                    border: '1px solid var(--border)',
-                                    color: alert.risk === 'High' ? 'var(--red)' : alert.risk === 'Medium' ? 'var(--amber)' : 'var(--green)',
-                                    fontWeight: 700 
-                                  }}>
-                                    {alert.risk}
-                                  </td>
-                                  <td style={{ padding: 4, border: '1px solid var(--border)' }}>{alert.alert}</td>
-                                  <td style={{ padding: 4, border: '1px solid var(--border)', color: 'var(--text3)' }}>
-                                    <div style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {alert.url}
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
                       )}
 
                       {/* Raw Output (Nmap/Nikto) */}

@@ -41,7 +41,7 @@ export const runReconAuto = async (target, tools, phase = 'recon') => {
   const defaultTools = phase === 'network'
     ? ['nmap', 'nessus']
     : phase === 'webapp'
-      ? ['nikto', 'zap']
+      ? ['nikto']
     : phase === 'subdomain'
       ? ['subfinder', 'amass']
       : ['theharvester', 'reconng', 'spiderfoot', 'maltego'];

@@ -1,7 +1,7 @@
 /**
  * ╔══════════════════════════════════════════════╗
  * ║   PAIA — Web Scan Service                    ║
- * ║   Integrates Nikto and OWASP ZAP             ║
+ * ║   Integrates Nikto                           ║
  * ╚══════════════════════════════════════════════╝
  */
 
@@ -17,9 +17,7 @@ const NIKTO_BASE = path.join(__dirname, '../bin/nikto');
 const NIKTO_PL = path.join(NIKTO_BASE, 'program', 'nikto.pl');
 const WINDOWS_PERL = "C:\\Strawberry\\perl\\bin\\perl.exe";
 
-// ZAP API Configuration (Default: Port 8080)
-const ZAP_BASE_URL = process.env.ZAP_API_URL || 'http://127.0.0.1:8080';
-const ZAP_API_KEY = process.env.ZAP_API_KEY || '';
+const WINDOWS_PERL = "C:\\Strawberry\\perl\\bin\\perl.exe";
 
 /**
  * Executes a Nikto scan.
@@ -80,71 +78,19 @@ const performNiktoScan = async (target, advanced = false) => {
 };
 
 /**
- * Triggers and fetches OWASP ZAP alerts.
- */
-const performZapScan = async (target) => {
-  try {
-    logger.info(`Attempting OWASP ZAP scan for: ${target}`);
-    
-    // 1. Trigger Passive/Active Scan (ZAP usually does passive by default on access)
-    // We'll try to trigger an active scan if ZAP is available
-    try {
-      await axios.get(`${ZAP_BASE_URL}/JSON/ascan/action/scan/`, {
-        params: { 
-          url: target, 
-          recurse: 'true',
-          apikey: ZAP_API_KEY
-        },
-        headers: {
-          'X-ZAP-API-Key': ZAP_API_KEY
-        }
-      });
-      logger.info(`ZAP scan triggered for ${target}`);
-    } catch (err) {
-      logger.warn(`Could not trigger active ZAP scan. Checking for existing alerts instead.`);
-    }
-
-    // 2. Fetch Alerts
-    // Note: ZAP alerts are typically accessed via 'alert/view/alerts' or 'core/view/alerts'
-    const response = await axios.get(`${ZAP_BASE_URL}/JSON/alert/view/alerts/`, {
-      params: { 
-        baseurl: target,
-        apikey: ZAP_API_KEY
-      },
-      headers: {
-        'X-ZAP-API-Key': ZAP_API_KEY
-      }
-    });
-
-    return response.data?.alerts || [];
-  } catch (err) {
-    if (err.response) {
-      logger.error(`ZAP API Error [${err.response.status}]: ${JSON.stringify(err.response.data)}`);
-    } else {
-      logger.error(`ZAP Connection Error: ${err.message}`);
-    }
-    return []; // Return empty array if ZAP is unreachable
-  }
-};
-
-/**
  * Core Orchestrator for Web Scanning
  */
 const runWebScan = async (target, options = {}) => {
   try {
-    const { advanced = false, runZap = true } = options;
+    const { advanced = false } = options;
 
-    // Run scans (Nikto is mandatory if Perl exists, ZAP is optional/fallback)
-    const niktoPromise = performNiktoScan(target, advanced);
-    const zapPromise = runZap ? performZapScan(target) : Promise.resolve([]);
-
-    const [niktoOutput, zapAlerts] = await Promise.all([niktoPromise, zapPromise]);
+    // Run Nikto scan
+    const niktoOutput = await performNiktoScan(target, advanced);
 
     // Save to DB
     const scanResult = new WebScanResult({
       target,
       niktoOutput,
-      zapAlerts,
       status: 'completed'
     });
 
@@ -155,7 +101,6 @@ const runWebScan = async (target, options = {}) => {
       success: true,
       target,
       nikto_result: niktoOutput,
-      zap_result: zapAlerts
     };
   } catch (err) {
     logger.error(`Web scan service error: ${err.message}`);

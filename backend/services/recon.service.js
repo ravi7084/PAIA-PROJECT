@@ -38,10 +38,6 @@ const TOOL_API_KEYS = {
   },
   nikto: {
     NIKTO_API_KEY: process.env.NIKTO_API_KEY || ''
-  },
-  zap: {
-    ZAP_API_KEY: process.env.ZAP_API_KEY || '',
-    ZAP_API_URL: process.env.ZAP_API_URL || ''
   }
 };
 
@@ -319,16 +315,6 @@ const buildToolSpec = (target, mode, timeoutMs, phase = 'recon') => ({
     args: ['-h', targetToHttpUrl(target)],
     timeoutMs,
     env: TOOL_API_KEYS.nikto
-  },
-  zap: {
-    tool: 'zap',
-    enabled: process.env.ENABLE_ZAP === 'true',
-    command: process.env.ZAP_BIN || 'zap-baseline.py',
-    args: process.env.ZAP_ARGS
-      ? process.env.ZAP_ARGS.replace('{target}', targetToHttpUrl(target)).split(' ')
-      : ['-t', targetToHttpUrl(target), '-m', '5'],
-    timeoutMs,
-    env: TOOL_API_KEYS.zap
   }
 });
 
@@ -336,7 +322,7 @@ const normalizeToolList = (tools, phase = 'recon') => {
   const allowed = phase === 'network'
     ? ['nmap', 'nessus']
     : phase === 'webapp'
-      ? ['nikto', 'zap']
+      ? ['nikto']
     : phase === 'subdomain'
       ? ['subfinder', 'amass']
       : ['theharvester', 'reconng', 'spiderfoot', 'maltego'];
@@ -344,7 +330,7 @@ const normalizeToolList = (tools, phase = 'recon') => {
     return phase === 'network'
       ? ['nmap', 'nessus']
       : phase === 'webapp'
-        ? ['nikto', 'zap']
+        ? ['nikto']
       : phase === 'subdomain'
         ? ['subfinder', 'amass']
         : ['theharvester', 'reconng', 'spiderfoot', 'maltego'];
