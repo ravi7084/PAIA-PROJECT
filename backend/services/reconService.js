@@ -13,8 +13,8 @@ const { runCommand, runExecutable, runRemoteExecutable } = require('../utils/com
 const logger = require('../utils/logger');
 
 // Define binary paths
-const LOCAL_AMASS = path.join(__dirname, '../bin/amass.exe');
-let AMASS_BIN = 'amass'; // Default to system PATH
+const LOCAL_SUBFINDER = path.join(__dirname, '../bin/subfinder.exe');
+let SUBFINDER_BIN = process.env.SUBFINDER_BIN || 'subfinder'; // Default to system PATH
 
 /**
  * Performs subdomain enumeration and DNS analysis.
@@ -26,30 +26,39 @@ const runRecon = async (domain) => {
   try {
     const isRemote = process.env.REMOTE_SCANNER_ENABLED === 'true';
     
-    // 1. Check if Amass is installed (System or Local)
+    // 1. Check if Subfinder is installed (System or Local)
     let isInstalled = false;
     
     if (isRemote) {
       isInstalled = true; // Remote scan handles its own dependencies
-      AMASS_BIN = 'amass';
+      SUBFINDER_BIN = process.env.SUBFINDER_BIN || 'subfinder';
     } else {
-      // Check locally first (since we just installed it)
-      if (fs.existsSync(LOCAL_AMASS)) {
-        AMASS_BIN = LOCAL_AMASS;
+      // Check locally first
+      if (fs.existsSync(LOCAL_SUBFINDER)) {
+        SUBFINDER_BIN = LOCAL_SUBFINDER;
         isInstalled = true;
-        logger.info(`Using local Amass: ${AMASS_BIN}`);
+        logger.info(`Using local Subfinder: ${SUBFINDER_BIN}`);
       } else {
         // Fallback to system path
         try {
-          await runCommand('amass -version');
-          AMASS_BIN = 'amass';
+          // Check if subfinder is in path
+          await runCommand(`${SUBFINDER_BIN} -version`);
           isInstalled = true;
-        } catch (err) {}
+        } catch (err) {
+          // Try default name if custom one fails
+          if (SUBFINDER_BIN !== 'subfinder') {
+            try {
+              await runCommand('subfinder -version');
+              SUBFINDER_BIN = 'subfinder';
+              isInstalled = true;
+            } catch (e) {}
+          }
+        }
       }
     }
 
     if (!isInstalled) {
-      throw new Error('Amass is not installed. Please run "npm run setup:amass" in the backend.');
+      throw new Error('Subfinder is not installed. Please install it to use this module.');
     }
 
     // 2. Run Subdomain Enumeration
@@ -58,14 +67,13 @@ const runRecon = async (domain) => {
     // Use the appropriate runner
     const runner = isRemote ? runRemoteExecutable : runExecutable;
     
-    // Use runExecutable/runRemoteExecutable with array to handle spaces in path safely
-    // Optimization: Stop once we have 50 subdomains to save time
-    const amassOutput = await runner(AMASS_BIN, ['enum', '-passive', '-d', domain], {
+    // Subfinder syntax: -d domain -silent
+    const subfinderOutput = await runner(SUBFINDER_BIN, ['-d', domain, '-silent'], {
       stopCondition: (out) => (out.match(/\n/g) || []).length >= 50
     });
     
     // 3. Parse and deduplicate subdomains
-    let subdomains = (amassOutput || '')
+    let subdomains = (subfinderOutput || '')
       .split('\n')
       .map(s => s.trim())
       .filter(s => s && s.includes(domain));
