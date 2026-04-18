@@ -161,14 +161,57 @@ const extractIndicators = (text, target = '', phase = 'recon') => {
   };
 };
 
+const path = require('path');
+const logger = require('../utils/logger'); // Assuming logger is available or needs import
+
 const runProcess = (command, args, timeoutMs, envOverrides = {}) =>
   new Promise((resolve) => {
+    const isRemote = process.env.REMOTE_SCANNER_ENABLED === 'true';
+    const remoteIp = process.env.REMOTE_SCANNER_IP;
+    const remoteUser = process.env.REMOTE_SCANNER_USER || 'kali';
+
+    let finalCommand = command;
+    let finalArgs = args;
+
+    if (isRemote && remoteIp) {
+      // Wrap IPv6 addresses in brackets
+      let formattedIp = remoteIp;
+      if (remoteIp.includes(':') && !remoteIp.startsWith('[') && !remoteIp.endsWith(']')) {
+        formattedIp = `[${remoteIp}]`;
+      }
+
+      // Extract binary name for Linux if it's a Windows path
+      let cleanCmd = command;
+      if (command.includes('\\') || command.includes('/')) {
+        cleanCmd = path.basename(command).replace('.exe', '').replace('.pl', '');
+      }
+
+      const remoteCmdStr = `${cleanCmd} ${args.join(' ')}`;
+      
+      // Use the logger if available, otherwise fallback
+      const logMsg = `⚡ [Remote Phase] Routing to Kali [${remoteUser}@${remoteIp}]: ${remoteCmdStr}`;
+      if (typeof logger !== 'undefined' && logger.info) {
+        logger.info(logMsg);
+      } else {
+        console.log(logMsg);
+      }
+
+      finalCommand = 'ssh';
+      finalArgs = [
+        '-o', 'BatchMode=yes',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'StrictHostKeyChecking=no',
+        `${remoteUser}@${formattedIp}`,
+        remoteCmdStr
+      ];
+    }
+
     const started = Date.now();
     let stdout = '';
     let stderr = '';
     let timedOut = false;
 
-    const child = spawn(command, args, {
+    const child = spawn(finalCommand, finalArgs, {
       shell: false,
       windowsHide: true,
       env: {
@@ -196,7 +239,7 @@ const runProcess = (command, args, timeoutMs, envOverrides = {}) =>
       clearTimeout(timer);
       resolve({
         ok: false,
-        command: `${command} ${args.join(' ')}`.trim(),
+        command: `${finalCommand} ${finalArgs.join(' ')}`.trim(),
         exitCode: null,
         stdout,
         stderr: stderr || err.message,
@@ -209,7 +252,7 @@ const runProcess = (command, args, timeoutMs, envOverrides = {}) =>
       clearTimeout(timer);
       resolve({
         ok: !timedOut && code === 0,
-        command: `${command} ${args.join(' ')}`.trim(),
+        command: `${finalCommand} ${finalArgs.join(' ')}`.trim(),
         exitCode: code,
         stdout,
         stderr,

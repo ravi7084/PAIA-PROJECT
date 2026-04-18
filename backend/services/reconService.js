@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
 const ReconResult = require('../models/ReconResult');
-const { runCommand, runExecutable } = require('../utils/commandRunner');
+const { runCommand, runExecutable, runRemoteExecutable } = require('../utils/commandRunner');
 const logger = require('../utils/logger');
 
 // Define binary paths
@@ -20,24 +20,32 @@ let AMASS_BIN = 'amass'; // Default to system PATH
  * Performs subdomain enumeration and DNS analysis.
  * @param {string} domain - The target domain.
  * @returns {Promise<Object>} - The structured recon data.
+ * @param {boolean} isRemote - Force remote mode (optional)
  */
 const runRecon = async (domain) => {
   try {
+    const isRemote = process.env.REMOTE_SCANNER_ENABLED === 'true';
+    
     // 1. Check if Amass is installed (System or Local)
     let isInstalled = false;
     
-    // Check locally first (since we just installed it)
-    if (fs.existsSync(LOCAL_AMASS)) {
-      AMASS_BIN = LOCAL_AMASS;
-      isInstalled = true;
-      logger.info(`Using local Amass: ${AMASS_BIN}`);
+    if (isRemote) {
+      isInstalled = true; // Remote scan handles its own dependencies
+      AMASS_BIN = 'amass';
     } else {
-      // Fallback to system path
-      try {
-        await runCommand('amass -version');
-        AMASS_BIN = 'amass';
+      // Check locally first (since we just installed it)
+      if (fs.existsSync(LOCAL_AMASS)) {
+        AMASS_BIN = LOCAL_AMASS;
         isInstalled = true;
-      } catch (err) {}
+        logger.info(`Using local Amass: ${AMASS_BIN}`);
+      } else {
+        // Fallback to system path
+        try {
+          await runCommand('amass -version');
+          AMASS_BIN = 'amass';
+          isInstalled = true;
+        } catch (err) {}
+      }
     }
 
     if (!isInstalled) {
@@ -45,10 +53,14 @@ const runRecon = async (domain) => {
     }
 
     // 2. Run Subdomain Enumeration
-    logger.info(`Starting Subdomain Enumeration for: ${domain}`);
-    // Use runExecutable with array to handle spaces in path safely
+    logger.info(`${isRemote ? '🚀 Remote' : 'Starting'} Subdomain Enumeration for: ${domain}`);
+    
+    // Use the appropriate runner
+    const runner = isRemote ? runRemoteExecutable : runExecutable;
+    
+    // Use runExecutable/runRemoteExecutable with array to handle spaces in path safely
     // Optimization: Stop once we have 50 subdomains to save time
-    const amassOutput = await runExecutable(AMASS_BIN, ['enum', '-passive', '-d', domain], {
+    const amassOutput = await runner(AMASS_BIN, ['enum', '-passive', '-d', domain], {
       stopCondition: (out) => (out.match(/\n/g) || []).length >= 50
     });
     
