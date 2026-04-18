@@ -73,6 +73,7 @@ app.use('/api/scan', require('./routes/webScanRoutes')); // New Web Vulnerabilit
 
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/user', require('./routes/user.routes'));
+app.use('/api', require('./routes/scan.routes')); // Unified Orchestration Routes
 app.use('/api/targets', require('./routes/target.routes')); // ← PHASE 2 MEIN YE LINE ADD KI
 
 // ── Phase 3+ NEW MODULES ──

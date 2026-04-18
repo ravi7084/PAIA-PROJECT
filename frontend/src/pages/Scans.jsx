@@ -1,274 +1,298 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
-  ScanLine, Search, Wifi, Globe, Shield, AlertTriangle,
-  Play, Loader2, CheckCircle2, ChevronDown, ChevronUp,
-  ArrowRight, Radio, Cpu, Clock,
+  ScanLine, Search, Wifi, Globe, Shield, Play, 
+  Loader2, CheckCircle2, AlertTriangle, List, 
+  ExternalLink, Trash2, Timer, Clock
 } from 'lucide-react';
 import Layout from '../components/layout';
-import AutoReconPanel from '../components/AutoReconPanel';
-import { DASHBOARD_UPDATE_EVENT, getDashboardEvents, publishDashboardEvent } from '../utils/dashboardRealtime';
-
-const scanFlowSteps = [
-  { label: 'Recon', icon: Search, phase: 'recon' },
-  { label: 'Scan', icon: ScanLine, phase: 'scan' },
-  { label: 'Analyze', icon: Cpu, phase: 'analyze' },
-  { label: 'Report', icon: Shield, phase: 'report' },
-];
-
-const ScanFlowVisualizer = ({ activePhase = 'idle' }) => {
-  const phaseOrder = ['recon', 'scan', 'analyze', 'report'];
-  const activeIdx = phaseOrder.indexOf(activePhase);
-
-  return (
-    <div className="scan-flow" style={{ justifyContent: 'center', padding: '20px 0' }}>
-      {scanFlowSteps.map((step, i) => {
-        const Icon = step.icon;
-        const isDone = activeIdx > i;
-        const isActive = activeIdx === i;
-        const isPending = activeIdx < i;
-        const nodeClass = isDone ? 'done' : isActive ? 'active' : 'pending';
-        const connectorClass = isDone ? 'done' : isActive ? 'active' : '';
-
-        return (
-          <div key={step.phase} style={{ display: 'flex', alignItems: 'center' }}>
-            <div className="scan-flow-step">
-              <div className={`scan-flow-node ${nodeClass}`}>
-                {isDone ? <CheckCircle2 size={18} color="var(--indigo-l)" /> :
-                  isActive ? <Loader2 size={18} className="spin" color="var(--green)" /> :
-                    <Icon size={18} color="var(--text3)" />}
-              </div>
-              <div className="scan-flow-label" style={{
-                color: isDone ? 'var(--indigo-l)' : isActive ? 'var(--green)' : 'var(--text3)'
-              }}>
-                {step.label}
-              </div>
-            </div>
-            {i < scanFlowSteps.length - 1 && (
-              <div className={`scan-flow-connector ${connectorClass}`} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-const mockTerminalLines = [
-  { prompt: '~', text: 'paia scan --target example.com --mode full', type: 'cmd' },
-  { prompt: '', text: '[*] Initializing scan pipeline...', type: 'info' },
-  { prompt: '', text: '[*] Phase 1: Passive reconnaissance', type: 'info' },
-  { prompt: '', text: '[+] DNS Resolution: example.com → 93.184.216.34', type: 'success' },
-  { prompt: '', text: '[+] WHOIS data retrieved — registrar: Cloudflare', type: 'success' },
-  { prompt: '', text: '[*] Phase 2: Port scanning (top 1000 ports)', type: 'info' },
-  { prompt: '', text: '[+] 22/tcp   open  ssh     OpenSSH 7.4', type: 'success' },
-  { prompt: '', text: '[+] 80/tcp   open  http    Apache 2.4.49', type: 'success' },
-  { prompt: '', text: '[+] 443/tcp  open  https   nginx/1.18', type: 'success' },
-  { prompt: '', text: '[!] 3306/tcp open  mysql   MySQL 5.7.34', type: 'warning' },
-  { prompt: '', text: '[*] Phase 3: Vulnerability analysis', type: 'info' },
-  { prompt: '', text: '[!!] CRITICAL: CVE-2021-41773 found on port 80', type: 'critical' },
-  { prompt: '', text: '[!] HIGH: MySQL exposed without authentication', type: 'warning' },
-  { prompt: '', text: '[*] Phase 4: Generating report...', type: 'info' },
-  { prompt: '', text: '[+] Scan complete — 4 findings, risk score: 78/100', type: 'success' },
-];
-
-const TerminalUI = () => {
-  const [lines, setLines] = useState([]);
-  const termRef = useRef(null);
-
-  useEffect(() => {
-    setLines([]);
-    const timers = mockTerminalLines.map((line, i) =>
-      setTimeout(() => {
-        setLines(prev => [...prev, line]);
-      }, (i + 1) * 350)
-    );
-    return () => timers.forEach(clearTimeout);
-  }, []);
-
-  useEffect(() => {
-    if (termRef.current) termRef.current.scrollTop = termRef.current.scrollHeight;
-  }, [lines]);
-
-  const colorMap = {
-    cmd: 'var(--text)',
-    info: 'var(--cyan)',
-    success: 'var(--green)',
-    warning: 'var(--amber)',
-    critical: 'var(--red)',
-  };
-
-  return (
-    <div className="terminal">
-      <div className="terminal-header">
-        <div className="terminal-dot red" />
-        <div className="terminal-dot yellow" />
-        <div className="terminal-dot green" />
-        <span className="terminal-title">paia-scan-engine — live output</span>
-      </div>
-      <div className="terminal-body" ref={termRef}>
-        {lines.map((line, i) => (
-          <div key={i} className="terminal-line" style={{ marginBottom: 2 }}>
-            {line.prompt && <span className="terminal-prompt">{line.prompt} $</span>}
-            <span style={{ color: colorMap[line.type] || 'var(--green)' }}>{line.text}</span>
-          </div>
-        ))}
-        {lines.length < mockTerminalLines.length && (
-          <div className="terminal-line">
-            <span className="terminal-cursor" />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
+import api from '../api/axios.config';
 
 const Scans = () => {
-  const [activePhase, setActivePhase] = useState('idle');
-  const [realtimeEvents, setRealtimeEvents] = useState([]);
+  const [target, setTarget] = useState('');
+  const [activeTab, setActiveTab] = useState('subdomain');
+  const [scans, setScans] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [currentScanId, setCurrentScanId] = useState(null);
 
-  // Simulate scan phase progression and publish events
+  // Fetch History on Load
   useEffect(() => {
-    const phases = ['recon', 'scan', 'analyze', 'report'];
-    let idx = 0;
-    const timer = setInterval(() => {
-      if (idx < phases.length) {
-        setActivePhase(phases[idx]);
-        idx++;
-      } else {
-        clearInterval(timer);
-        // Publish scan completion event
-        publishDashboardEvent({
-          source: 'scan-center',
-          title: 'Scan completed for example.com',
-          target: 'example.com',
-          severity: 'info',
-          riskScore: 78,
-          meta: '4 findings, risk score: 78/100',
-        });
+    fetchScans();
+  }, []);
+
+  // Polling logic
+  useEffect(() => {
+    let interval;
+    if (currentScanId) {
+      interval = setInterval(async () => {
+        try {
+          // Note: using 'api' instance which uses baseURL: /api
+          const res = await api.get(`/scan/${currentScanId}`);
+          const scanData = res.data.data;
+          
+          if (scanData.status !== 'running') {
+            setCurrentScanId(null);
+            fetchScans();
+          }
+        } catch (err) {
+          console.error("Polling error:", err);
+          setCurrentScanId(null);
+        }
+      }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [currentScanId]);
+
+  const fetchScans = async () => {
+    try {
+      const res = await api.get('/scans');
+      setScans(res.data.data);
+    } catch (err) {
+      console.error("Failed to fetch scans:", err);
+    }
+  };
+
+  const handleStartScan = async (type) => {
+    if (!target) return alert('Please enter a target domain/IP');
+    
+    setLoading(true);
+    try {
+      const res = await api.post('/start-scan', { target, type });
+      if (res.data.success) {
+        setCurrentScanId(res.data.scanId);
+        fetchScans();
       }
-    }, 3500);
-    return () => clearInterval(timer);
-  }, []);
+    } catch (err) {
+      alert(`Error starting scan: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  useEffect(() => {
-    setRealtimeEvents(getDashboardEvents());
-
-    const onRealtimeUpdate = (ev) => {
-      if (!ev?.detail) return;
-      setRealtimeEvents((prev) => [ev.detail, ...prev].slice(0, 100));
-    };
-
-    const onStorage = (ev) => {
-      if (ev.key !== 'paia_dashboard_events_v1') return;
-      setRealtimeEvents(getDashboardEvents());
-    };
-
-    window.addEventListener(DASHBOARD_UPDATE_EVENT, onRealtimeUpdate);
-    window.addEventListener('storage', onStorage);
-
-    return () => {
-      window.removeEventListener(DASHBOARD_UPDATE_EVENT, onRealtimeUpdate);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, []);
-
-  // Compute stats from realtimeEvents
-  const scanEvents = realtimeEvents.filter(event => event.source === 'scan-center');
-  const lastScan = scanEvents[0] || null;
-  const totalScans = scanEvents.length;
-  const criticalFindings = realtimeEvents.filter(event => event.severity === 'critical').length;
-  const avgScanTime = '3m 24s'; // Placeholder, could compute if events have duration
+  const filteredScans = scans.filter(s => s.type === activeTab);
 
   return (
     <Layout>
-      <div className="page-header">
-        <h2><ScanLine size={22} /> Scan Center</h2>
-        <p>Run reconnaissance, network, and web vulnerability scans with real-time visual feedback</p>
+      <div className="page-header mb-6">
+        <h2 className="flex items-center gap-2 text-2xl font-bold">
+          <ScanLine className="text-indigo-500" /> PAIA Scan Orchestrator
+        </h2>
+        <p className="text-gray-400">Execute and manage multi-module security scans via Kali Linux API</p>
       </div>
 
-      {/* ── Scan Flow Visualizer ── */}
-      <div className="dark-card" style={{ marginBottom: 14 }}>
-        <div className="card-title"><Radio size={13} /> Scan Pipeline</div>
-        <ScanFlowVisualizer activePhase={activePhase} />
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
-        {/* ── Terminal UI ── */}
-        <div className="dark-card">
-          <div className="card-title"><Cpu size={13} /> Live Terminal Output</div>
-          <TerminalUI />
+      {/* ── Scan Configuration ── */}
+      <div className="dark-card p-6 mb-6 bg-[var(--bg2)] border border-[var(--border)] rounded-xl">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label className="block text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Target Domain or IP</label>
+            <div className="relative">
+              <Globe className="absolute left-3 top-3 text-gray-500" size={18} />
+              <input 
+                type="text" 
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                placeholder="example.com or 192.168.1.1"
+                className="w-full bg-[var(--bg-d)] border border-[var(--border)] text-white pl-10 pr-4 py-2.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+              />
+            </div>
+          </div>
+          <div className="flex items-end gap-3 font-bold">
+            <button 
+              onClick={() => handleStartScan('subdomain')}
+              disabled={loading || currentScanId}
+              className="px-4 py-2.5 bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded-lg hover:bg-cyan-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {loading && activeTab === 'subdomain' ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
+              Subdomain
+            </button>
+            <button 
+              onClick={() => handleStartScan('network')}
+              disabled={loading || currentScanId}
+              className="px-4 py-2.5 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {loading && activeTab === 'network' ? <Loader2 className="animate-spin" size={18} /> : <Wifi size={18} />}
+              Network
+            </button>
+            <button 
+              onClick={() => handleStartScan('webapp')}
+              disabled={loading || currentScanId}
+              className="px-4 py-2.5 bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {loading && activeTab === 'webapp' ? <Loader2 className="animate-spin" size={18} /> : <Globe size={18} />}
+              Web App
+            </button>
+          </div>
         </div>
+        {currentScanId && (
+          <div className="mt-4 flex items-center gap-3 text-cyan-400 text-sm bg-cyan-500/10 p-3 rounded-lg border border-cyan-500/20">
+            <Loader2 className="animate-spin" size={16} />
+            Scan in progress... Polling Kali Linux API for results.
+          </div>
+        )}
+      </div>
 
-        {/* ── Scan Stats ── */}
-        <div className="dark-card">
-          <div className="card-title"><Shield size={13} /> Scan Intelligence</div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '12px 14px', borderRadius: 10, background: 'rgba(16,185,129,0.05)',
-              border: '1px solid rgba(16,185,129,0.1)',
-            }}>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>LAST SCAN</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{lastScan?.target || 'example.com'}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--green)' }}>{lastScan?.riskScore || 78}</div>
-                <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700 }}>RISK SCORE</div>
-              </div>
-            </div>
+      {/* ── Results Navigation ── */}
+      <div className="flex gap-2 mb-6 p-1 bg-[var(--bg-d)] border border-[var(--border)] rounded-xl inline-flex">
+        {['subdomain', 'network', 'webapp'].map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-6 py-2 rounded-lg text-sm font-bold capitalize transition-all ${
+              activeTab === tab 
+              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
+              : 'text-gray-500 hover:text-white'
+            }`}
+          >
+            {tab} Results
+          </button>
+        ))}
+      </div>
 
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '12px 14px', borderRadius: 10, background: 'rgba(99,102,241,0.05)',
-              border: '1px solid rgba(99,102,241,0.1)',
-            }}>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>TOTAL SCANS</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{totalScans || 24} scans completed</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--indigo-l)' }}>{totalScans || 24}</div>
-                <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700 }}>TOTAL</div>
-              </div>
-            </div>
+      {/* ── Results List ── */}
+      <div className="grid grid-cols-1 gap-4">
+        {filteredScans.length === 0 ? (
+          <div className="dark-card p-12 text-center text-gray-500 border-dashed border-2 border-[var(--border)]">
+            <List size={40} className="mx-auto mb-4 opacity-20" />
+            <p className="font-medium">No {activeTab} scans found. Start a scan above.</p>
+          </div>
+        ) : (
+          filteredScans.map(scan => (
+            <ScanResultCard key={scan._id} scan={scan} />
+          ))
+        )}
+      </div>
+    </Layout>
+  );
+};
 
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '12px 14px', borderRadius: 10, background: 'rgba(255,59,92,0.05)',
-              border: '1px solid rgba(255,59,92,0.1)',
-            }}>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>CRITICAL FINDINGS</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{criticalFindings || 2} critical vulnerabilities</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--red)' }}>{criticalFindings || 2}</div>
-                <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700 }}>CRITICAL</div>
-              </div>
-            </div>
+const ScanResultCard = ({ scan }) => {
+  const [expanded, setExpanded] = useState(false);
+  const statusColors = {
+    running: 'text-cyan-400 bg-cyan-400/10 border-cyan-500/20',
+    completed: 'text-emerald-400 bg-emerald-400/10 border-emerald-500/20',
+    failed: 'text-rose-400 bg-rose-400/10 border-rose-500/20'
+  };
 
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '12px 14px', borderRadius: 10, background: 'rgba(6,182,212,0.05)',
-              border: '1px solid rgba(6,182,212,0.1)',
-            }}>
-              <div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, marginBottom: 4 }}>AVG SCAN TIME</div>
-                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>3m 24s per target</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <Clock size={20} color="var(--cyan)" />
-              </div>
+  return (
+    <div className="dark-card overflow-hidden bg-[var(--bg2)] border border-[var(--border)] rounded-xl transition-all hover:border-indigo-500/30">
+      <div className="p-5 flex items-center justify-between cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center gap-4">
+          <div className={`p-2.5 rounded-lg bg-[var(--bg-d)] border border-[var(--border)]`}>
+            {scan.type === 'subdomain' && <Search size={20} className="text-cyan-400" />}
+            {scan.type === 'network' && <Wifi size={20} className="text-indigo-400" />}
+            {scan.type === 'webapp' && <Shield size={20} className="text-emerald-400" />}
+          </div>
+          <div>
+            <h3 className="font-bold text-lg text-white">{scan.target}</h3>
+            <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 font-bold uppercase tracking-widest">
+              <span className={`px-2 py-0.5 rounded border ${statusColors[scan.status]}`}>
+                {scan.status}
+              </span>
+              <span className="flex items-center gap-1"><Clock size={12} /> {new Date(scan.createdAt).toLocaleString()}</span>
             </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          {expanded ? <Trash2 size={18} className="text-gray-600 hover:text-rose-500 transition-colors" /> : null}
+          <div className="text-gray-500 hover:text-white transition-colors">
+            {expanded ? <ExternalLink size={20} /> : <div className="p-2 rounded-full hover:bg-gray-800"><List size={20} /></div>}
           </div>
         </div>
       </div>
 
-      {/* ── Existing Auto Recon Panel ── */}
-      <AutoReconPanel />
-    </Layout>
+      {expanded && (
+        <div className="p-6 border-t border-[var(--border)] bg-[var(--bg-d)] text-sm animate-in fade-in slide-in-from-top-2 duration-300">
+          {scan.status === 'completed' && scan.result ? (
+            <ResultRenderer type={scan.type} result={scan.result} />
+          ) : (
+            <div className="p-10 text-center text-gray-500 flex flex-col items-center gap-3">
+              {scan.status === 'running' ? (
+                <>
+                  <Loader2 className="animate-spin text-cyan-400" size={32} />
+                  <p className="font-bold">Gathering intel from Kali Linux...</p>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="text-rose-400" size={32} />
+                  <p className="font-bold">Scan failed: {scan.result?.error || 'Unknown error'}</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
+};
+
+const ResultRenderer = ({ type, result }) => {
+  if (type === 'network') {
+    return (
+      <div className="space-y-4">
+        <h4 className="text-indigo-400 font-bold flex items-center gap-2"><Wifi size={16} /> Open Ports & Services</h4>
+        <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+          <table className="w-full text-left text-xs bg-[var(--bg2)]">
+            <thead className="bg-[#1a1b2e] text-gray-400 uppercase tracking-wider font-bold">
+              <tr>
+                <th className="p-3 border-b border-[var(--border)]">Port</th>
+                <th className="p-3 border-b border-[var(--border)]">Protocol</th>
+                <th className="p-3 border-b border-[var(--border)]">Service</th>
+                <th className="p-3 border-b border-[var(--border)]">Version</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.ports && result.ports.length > 0 ? result.ports.map((p, i) => (
+                <tr key={i} className="hover:bg-indigo-500/5 transition-colors border-b border-[var(--border)]/50">
+                  <td className="p-3 text-white font-bold">{p.port}</td>
+                  <td className="p-3 text-gray-400">{p.protocol}</td>
+                  <td className="p-3"><span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded border border-indigo-500/20">{p.service}</span></td>
+                  <td className="p-3 text-gray-300 font-mono">{p.version || 'unknown'}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan="4" className="p-10 text-center text-gray-600">No open ports identified.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'subdomain') {
+    return (
+      <div>
+        <h4 className="text-cyan-400 font-bold mb-4 flex items-center gap-2"><Search size={16} /> Discovered Subdomains ({result.count})</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+          {result.subdomains && result.subdomains.map((sub, i) => (
+            <div key={i} className="p-2 px-3 bg-[#1a1b2e] border border-[var(--border)] rounded-lg text-white font-mono text-xs flex items-center justify-between group hover:border-cyan-500/40 transition-all">
+              {sub}
+              <ExternalLink size={12} className="text-gray-700 group-hover:text-cyan-400 cursor-pointer" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'webapp') {
+    return (
+      <div>
+        <h4 className="text-emerald-400 font-bold mb-4 flex items-center gap-2"><Shield size={16} /> Web Vulnerability Findings</h4>
+        <div className="space-y-2">
+          {result.findings && result.findings.map((f, i) => (
+            <div key={i} className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-lg flex items-start gap-3">
+              <CheckCircle2 size={16} className="text-emerald-500 mt-0.5 mt-0.5 flex-shrink-0" />
+              <p className="text-gray-300 leading-relaxed text-xs">{f}</p>
+            </div>
+          ))}
+          {(!result.findings || result.findings.length === 0) && (
+            <p className="text-gray-500 italic p-4 text-center">No high-risk vulnerabilities flagged in initial sweep.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return <pre className="text-xs text-gray-500 break-all bg-[#0d0e1b] p-4 rounded-lg">{JSON.stringify(result, null, 2)}</pre>;
 };
 
 export default Scans;
