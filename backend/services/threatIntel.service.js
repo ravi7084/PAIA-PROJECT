@@ -7,8 +7,17 @@
  */
 
 const axios = require('axios');
+const dns = require('dns').promises;
 const ThreatIntel = require('../models/threatIntel.model');
 const logger = require('../utils/logger');
+
+const resolveToIP = async (target) => {
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target)) return target;
+  try {
+    const recs = await dns.lookup(target);
+    return recs.address;
+  } catch (err) { return null; }
+};
 
 const safe = (fn, label) => async (...args) => {
   try {
@@ -41,10 +50,13 @@ const shodanLookup = safe(async (target) => {
   const key = process.env.SHODAN_API_KEY;
   if (!key) return { provider: 'shodan', skipped: true, reason: 'No API key' };
 
-  const cached = await getCached(target, 'shodan');
+  const ip = await resolveToIP(target);
+  if (!ip) return { provider: 'shodan', skipped: true, reason: 'Could not resolve IP for Shodan' };
+
+  const cached = await getCached(ip, 'shodan');
   if (cached) return { provider: 'shodan', cached: true, ...cached };
 
-  const url = `https://api.shodan.io/shodan/host/${target}?key=${key}`;
+  const url = `https://api.shodan.io/shodan/host/${ip}?key=${key}`;
   const { data } = await axios.get(url, { timeout: 15000 });
 
   const result = {
@@ -68,7 +80,7 @@ const shodanLookup = safe(async (target) => {
     city: data.city || '',
   };
 
-  await saveCache(target, 'shodan', result);
+  await saveCache(ip, 'shodan', result);
   return result;
 }, 'shodan');
 
@@ -81,11 +93,14 @@ const censysLookup = safe(async (target) => {
   const secret = process.env.CENSYS_API_SECRET;
   if (!id || !secret) return { provider: 'censys', skipped: true, reason: 'No API credentials' };
 
-  const cached = await getCached(target, 'censys');
+  const ip = await resolveToIP(target);
+  if (!ip) return { provider: 'censys', skipped: true, reason: 'Could not resolve IP for Censys' };
+
+  const cached = await getCached(ip, 'censys');
   if (cached) return { provider: 'censys', cached: true, ...cached };
 
   const auth = Buffer.from(`${id}:${secret}`).toString('base64');
-  const { data } = await axios.get(`https://search.censys.io/api/v2/hosts/${target}`, {
+  const { data } = await axios.get(`https://search.censys.io/api/v2/hosts/${ip}`, {
     headers: { Authorization: `Basic ${auth}` },
     timeout: 15000,
   });
@@ -109,7 +124,7 @@ const censysLookup = safe(async (target) => {
     },
   };
 
-  await saveCache(target, 'censys', result);
+  await saveCache(ip, 'censys', result);
   return result;
 }, 'censys');
 

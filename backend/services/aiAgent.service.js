@@ -1,287 +1,1024 @@
 /**
  * ╔══════════════════════════════════════════════╗
  * ║   PAIA — AI Agent Service (THE BRAIN)        ║
- * ║   Orchestrates Gemini + Tools + DB           ║
- * ║   This is the core autonomous scan loop      ║
+ * ║   7-Phase Automated Penetration Test Engine  ║
+ * ║   Orchestrates: ThreatIntel → crt.sh →       ║
+ * ║   DNS → Nmap → Nikto → Gemini → Report      ║
  * ╚══════════════════════════════════════════════╝
  */
 
+const dns = require('dns').promises;
+const https = require('https');
+const http = require('http');
+const { spawn } = require('child_process');
 const ScanSession = require('../models/scanSession.model');
 const gemini = require('./gemini.service');
 const threatIntel = require('./threatIntel.service');
-const { runReconScan } = require('./recon.service');
+const nvdVulners = require('./nvdVulners.service');
+const mitreAttack = require('./mitreAttack.service');
 const logger = require('../utils/logger');
-
-const MAX_ITERATIONS = parseInt(process.env.AI_AGENT_MAX_ITERATIONS || '10', 10);
 
 /* ── Socket.io helper ── */
 const emit = (io, scanId, event, payload) => {
   if (!io || !scanId) return;
-  io.to(`scan_${scanId}`).emit(event, { scanId, ...payload });
+  io.to('scan_' + scanId).emit(event, { scanId: scanId, ...payload });
 };
 
-/* ── Tool executor — maps Gemini's decision to actual functions ── */
-const executeTool = async (toolName, params, target) => {
-  const started = Date.now();
-
+/* ── Update MongoDB progress tracker ── */
+const updateProgress = async (scanId, currentPhase, progress, currentMessage) => {
   try {
-    switch (toolName) {
-      /* ── API-based tools ── */
-      case 'shodan_api':
-        return { tool: 'shodan_api', status: 'success', data: await threatIntel.shodanLookup(params.target || target), durationMs: Date.now() - started };
-      case 'virustotal_api':
-        return { tool: 'virustotal_api', status: 'success', data: await threatIntel.virusTotalLookup(params.target || target), durationMs: Date.now() - started };
-      case 'whois_api':
-        return { tool: 'whois_api', status: 'success', data: await threatIntel.whoisLookup(params.target || target), durationMs: Date.now() - started };
-      case 'abuseipdb_api':
-        return { tool: 'abuseipdb_api', status: 'success', data: await threatIntel.abuseIPDBLookup(params.target || target), durationMs: Date.now() - started };
-      case 'hunter_api':
-        return { tool: 'hunter_api', status: 'success', data: await threatIntel.hunterLookup(params.target || target), durationMs: Date.now() - started };
-      case 'otx_api':
-        return { tool: 'otx_api', status: 'success', data: await threatIntel.otxLookup(params.target || target), durationMs: Date.now() - started };
-      case 'censys_api':
-        return { tool: 'censys_api', status: 'success', data: await threatIntel.censysLookup(params.target || target), durationMs: Date.now() - started };
-
-      /* ── CLI-based tools (via recon.service) ── */
-      case 'nmap_cli': {
-        const r = await runReconScan({ targetInput: params.target || target, tools: ['nmap'], mode: 'active', phase: 'network', timeoutMs: 120000 });
-        return { tool: 'nmap_cli', status: r.status, data: r, durationMs: Date.now() - started };
-      }
-      case 'nikto_cli': {
-        const r = await runReconScan({ targetInput: params.target || target, tools: ['nikto'], mode: 'active', phase: 'webapp', timeoutMs: 120000 });
-        return { tool: 'nikto_cli', status: r.status, data: r, durationMs: Date.now() - started };
-      }
-      case 'subfinder_cli': {
-        const r = await runReconScan({ targetInput: params.target || target, tools: ['subfinder'], mode: 'passive', phase: 'subdomain', timeoutMs: 120000 });
-        return { tool: 'subfinder_cli', status: r.status, data: r, durationMs: Date.now() - started };
-      }
-      case 'amass_cli': {
-        const r = await runReconScan({ targetInput: params.target || target, tools: ['amass'], mode: 'passive', phase: 'subdomain', timeoutMs: 120000 });
-        return { tool: 'amass_cli', status: r.status, data: r, durationMs: Date.now() - started };
-      }
-
-      default:
-        return { tool: toolName, status: 'skipped', data: { reason: `Unknown tool: ${toolName}` }, durationMs: Date.now() - started };
-    }
+    await ScanSession.findByIdAndUpdate(scanId, {
+      currentPhase: currentPhase,
+      progress: Math.min(100, Math.max(0, progress)),
+      currentMessage: currentMessage,
+    });
   } catch (err) {
-    return { tool: toolName, status: 'failed', data: { error: err.message }, durationMs: Date.now() - started };
+    logger.warn('Progress update failed: ' + err.message);
   }
 };
 
-/**
- * Main AI Agent loop — THE BRAIN
- */
-const runAIAgent = async ({ targetId, userId, target, scope = 'full', io }) => {
-  const scanId = (
-    await ScanSession.create({
-      user_id: userId,
-      target_id: targetId || null,
-      target,
-      scope,
-      status: 'running',
-      startedAt: new Date(),
-      maxIterations: MAX_ITERATIONS,
-    })
-  )._id.toString();
+/* ── HTTP GET helper for crt.sh (returns raw body) ── */
+const httpGet = (url, timeoutMs) => {
+  return new Promise((resolve, reject) => {
+    var timeout = null;
+    var proto = url.indexOf('https') === 0 ? https : http;
 
-  logger.info(`AI Agent started: scanId=${scanId} target=${target} scope=${scope}`);
-  emit(io, scanId, 'ai:started', { target, scope, startedAt: new Date() });
-
-  try {
-    /* ─────────────────────────────────────────
-       PHASE 1: Passive Recon (Threat Intel APIs)
-       ───────────────────────────────────────── */
-    emit(io, scanId, 'ai:phase_update', { phase: 'recon', status: 'running' });
-
-    const threatIntelResults = await threatIntel.runAllThreatIntel(target);
-
-    await ScanSession.findByIdAndUpdate(scanId, {
-      threatIntelResults,
-      $push: {
-        phases: { name: 'recon', status: 'completed', tools: ['threat_intel_apis'], results: threatIntelResults, startedAt: new Date(), finishedAt: new Date() },
-      },
+    var req = proto.get(url, { timeout: timeoutMs || 30000 }, (res) => {
+      var chunks = [];
+      res.on('data', (chunk) => { chunks.push(chunk); });
+      res.on('end', () => {
+        if (timeout) clearTimeout(timeout);
+        var body = Buffer.concat(chunks).toString('utf8');
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(body);
+        } else {
+          reject(new Error('HTTP ' + res.statusCode + ': ' + body.slice(0, 200)));
+        }
+      });
+      res.on('error', (err) => {
+        if (timeout) clearTimeout(timeout);
+        reject(err);
+      });
     });
 
-    emit(io, scanId, 'ai:phase_update', { phase: 'recon', status: 'completed', data: threatIntelResults });
+    req.on('error', (err) => {
+      if (timeout) clearTimeout(timeout);
+      reject(err);
+    });
 
-    /* ─────────────────────────────────────────
-       PHASE 2: AI Decision Loop
-       ───────────────────────────────────────── */
-    const completedScans = [{ tool: 'threat_intel_apis', status: 'success', data: threatIntelResults }];
-    const usedTools = ['threat_intel_apis'];
-    let allVulnerabilities = [];
-    let allDecisions = [];
-    let iteration = 0;
-    let shouldContinue = true;
+    timeout = setTimeout(() => {
+      req.destroy();
+      reject(new Error('HTTP request timeout after ' + (timeoutMs || 30000) + 'ms'));
+    }, timeoutMs || 30000);
+  });
+};
 
-    while (shouldContinue && iteration < MAX_ITERATIONS) {
-      iteration++;
-      emit(io, scanId, 'ai:thinking', { iteration, maxIterations: MAX_ITERATIONS });
+/* ── Spawn CLI tool with timeout ── */
+const spawnTool = (bin, args, timeoutMs) => {
+  return new Promise((resolve) => {
+    var stdout = '';
+    var stderr = '';
+    var killed = false;
+    var timer = null;
 
-      // Ask Gemini what to do next
-      const decision = await gemini.analyzeAndDecide({
-        target,
-        scope,
-        iteration,
-        maxIterations: MAX_ITERATIONS,
-        completedScans,
-        usedTools,
+    try {
+      var proc = spawn(bin, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
       });
 
-      // Collect findings from this decision
-      if (Array.isArray(decision.currentFindings)) {
-        allVulnerabilities = allVulnerabilities.concat(decision.currentFindings);
-      }
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
-      const decisionRecord = {
-        iteration,
-        promptSummary: `Iteration ${iteration}: analyzed ${completedScans.length} scan results`,
-        response: decision,
-        reasoning: decision.reasoning || '',
-        action: decision.nextAction || 'generate_report',
-        riskLevel: decision.riskLevel || 'info',
-        timestamp: new Date(),
-      };
-      allDecisions.push(decisionRecord);
-
-      // Save decision to DB
-      await ScanSession.findByIdAndUpdate(scanId, {
-        currentIteration: iteration,
-        $push: { aiDecisions: decisionRecord },
-        vulnerabilities: allVulnerabilities.map((v) => ({
-          title: v.title || 'Untitled',
-          type: v.type || 'unknown',
-          severity: v.severity || 'info',
-          cvss: v.cvss || 0,
-          description: v.description || '',
-          evidence: v.evidence || '',
-          remediation: v.remediation || '',
-          cveId: v.cveId || '',
-          tool: v.tool || '',
-        })),
+      proc.on('error', (err) => {
+        if (timer) clearTimeout(timer);
+        // ENOENT = tool not installed
+        if (err.code === 'ENOENT') {
+          resolve({ installed: false, stdout: '', stderr: err.message, exitCode: -1, timedOut: false });
+        } else {
+          resolve({ installed: true, stdout: stdout, stderr: stderr + '\n' + err.message, exitCode: -1, timedOut: false });
+        }
       });
 
-      emit(io, scanId, 'ai:decision', { iteration, decision: decisionRecord });
+      proc.on('close', (code) => {
+        if (timer) clearTimeout(timer);
+        resolve({ installed: true, stdout: stdout, stderr: stderr, exitCode: code, timedOut: killed });
+      });
 
-      // Check if agent wants to stop
-      if (!decision.shouldContinue || decision.nextAction === 'generate_report') {
-        shouldContinue = false;
-        break;
+      timer = setTimeout(() => {
+        killed = true;
+        try { proc.kill('SIGTERM'); } catch (e) { /* ignore */ }
+        setTimeout(() => {
+          try { proc.kill('SIGKILL'); } catch (e) { /* ignore */ }
+        }, 3000);
+      }, timeoutMs || 180000);
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        resolve({ installed: false, stdout: '', stderr: err.message, exitCode: -1, timedOut: false });
+      } else {
+        resolve({ installed: true, stdout: '', stderr: err.message, exitCode: -1, timedOut: false });
       }
+    }
+  });
+};
 
-      // Execute the recommended tool
-      const toolName = decision.nextAction;
-      if (usedTools.includes(toolName)) {
-        // Avoid running same tool twice
-        logger.info(`AI Agent skipping duplicate tool: ${toolName}`);
-        continue;
-      }
+/* ── Extract domain from target (strip www. prefix) ── */
+const extractDomain = (target) => {
+  var clean = target.replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+  return clean;
+};
 
-      emit(io, scanId, 'ai:tool_running', { tool: toolName, iteration });
+/* ── Check if target is an IP address ── */
+const isIP = (target) => {
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(target);
+};
 
-      const toolResult = await executeTool(toolName, decision.parameters || {}, target);
-      completedScans.push(toolResult);
-      usedTools.push(toolName);
 
-      // Determine which phase this belongs to
-      const phaseMap = {
-        shodan_api: 'recon', virustotal_api: 'recon', whois_api: 'recon',
-        abuseipdb_api: 'recon', hunter_api: 'recon', otx_api: 'recon', censys_api: 'recon',
-        nmap_cli: 'network', nikto_cli: 'webapp',
-        subfinder_cli: 'subdomain', amass_cli: 'subdomain',
-      };
+/**
+ * ═══════════════════════════════════════════════════
+ *   MAIN AI AGENT — 7-PHASE PIPELINE
+ * ═══════════════════════════════════════════════════
+ */
+const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
+  scope = scope || 'full';
+  var cleanTarget = extractDomain(target);
+
+  // Update existing session to 'running'
+  await ScanSession.findByIdAndUpdate(scanId, {
+    status: 'running',
+    target_id: targetId || null,
+    target: cleanTarget,
+    scope: scope,
+    maxIterations: 1,
+    currentPhase: 'initializing',
+    progress: 0,
+    currentMessage: 'Initializing AI Agent...',
+  });
+
+  logger.info('AI Agent started: scanId=' + scanId + ' target=' + cleanTarget + ' scope=' + scope);
+  emit(io, scanId, 'ai:started', { target: cleanTarget, scope: scope, startedAt: new Date() });
+
+  // Accumulate all data across phases
+  var completedScans = [];
+  var usedTools = [];
+  var allVulnerabilities = [];
+  var allDecisions = [];
+
+  try {
+    /* ═══════════════════════════════════════════
+       PHASE 1 — Threat Intelligence (5% → 18%)
+       ═══════════════════════════════════════════ */
+    var threatIntelResults = [];
+    try {
+      await updateProgress(scanId, 'threat_intel', 5, 'Running Threat Intelligence APIs...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'threat_intel', status: 'running' });
+
+      logger.info('Phase 1: Threat Intelligence — target=' + cleanTarget);
+      threatIntelResults = await threatIntel.runAllThreatIntel(cleanTarget);
 
       await ScanSession.findByIdAndUpdate(scanId, {
+        threatIntelResults: threatIntelResults,
         $push: {
           phases: {
-            name: phaseMap[toolName] || 'recon',
-            status: toolResult.status === 'success' ? 'completed' : 'failed',
-            tools: [toolName],
-            results: toolResult.data,
+            name: 'recon',
+            status: 'completed',
+            tools: ['threat_intel_apis'],
+            results: { providersRun: Array.isArray(threatIntelResults) ? threatIntelResults.length : 0 },
             startedAt: new Date(),
             finishedAt: new Date(),
           },
         },
       });
 
-      emit(io, scanId, 'ai:tool_complete', { tool: toolName, status: toolResult.status, iteration });
+      completedScans.push({ tool: 'threat_intel_apis', status: 'success', data: threatIntelResults });
+      usedTools.push('threat_intel_apis');
+
+      emit(io, scanId, 'ai:tool_complete', { tool: 'threat_intel_apis', status: 'success' });
+      await updateProgress(scanId, 'threat_intel', 18, 'Threat Intelligence complete');
+      emit(io, scanId, 'ai:phase_update', { phase: 'threat_intel', status: 'completed' });
+
+      logger.info('Phase 1 completed: ' + (Array.isArray(threatIntelResults) ? threatIntelResults.length : 0) + ' providers returned');
+    } catch (err) {
+      logger.warn('Phase 1 (Threat Intel) failed: ' + err.message);
+      await updateProgress(scanId, 'threat_intel', 18, 'Threat Intelligence failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'threat_intel', status: 'failed' });
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'recon',
+            status: 'failed',
+            tools: ['threat_intel_apis'],
+            results: { error: err.message },
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
     }
 
-    /* ─────────────────────────────────────────
-       PHASE 3: Report Generation
-       ───────────────────────────────────────── */
+
+    /* ═══════════════════════════════════════════
+       PHASE 2 — Subdomain Enumeration via crt.sh (20% → 32%)
+       ═══════════════════════════════════════════ */
+    var subdomains = [];
+    try {
+      var skipSubdomains = isIP(cleanTarget);
+      if (skipSubdomains) {
+        logger.info('Phase 2: Skipping crt.sh — target is an IP address');
+        await updateProgress(scanId, 'subdomain_enum', 32, 'Subdomain enum skipped (IP target)');
+      } else {
+        await updateProgress(scanId, 'subdomain_enum', 20, 'Enumerating subdomains via crt.sh...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_enum', status: 'running' });
+
+        logger.info('Phase 2: crt.sh subdomain enumeration — domain=' + cleanTarget);
+        var crtUrl = 'https://crt.sh/?q=%25.' + encodeURIComponent(cleanTarget) + '&output=json';
+        var crtBody = await httpGet(crtUrl, 30000);
+        var crtData = JSON.parse(crtBody);
+
+        // Deduplicate and filter wildcards
+        var subdomainSet = {};
+        if (Array.isArray(crtData)) {
+          for (var ci = 0; ci < crtData.length; ci++) {
+            var nameValue = crtData[ci].name_value || '';
+            var names = nameValue.split('\n');
+            for (var ni = 0; ni < names.length; ni++) {
+              var sub = names[ni].trim().toLowerCase();
+              // Filter out wildcards and empty
+              if (sub && sub.indexOf('*') === -1 && sub.length > 0) {
+                subdomainSet[sub] = true;
+              }
+            }
+          }
+        }
+        subdomains = Object.keys(subdomainSet).sort();
+
+        completedScans.push({
+          tool: 'crt_sh',
+          status: 'success',
+          data: { subdomainCount: subdomains.length, subdomains: subdomains.slice(0, 100) },
+        });
+        usedTools.push('crt_sh');
+
+        await ScanSession.findByIdAndUpdate(scanId, {
+          $push: {
+            phases: {
+              name: 'subdomain',
+              status: 'completed',
+              tools: ['crt_sh'],
+              results: { count: subdomains.length, sample: subdomains.slice(0, 20) },
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            },
+          },
+        });
+
+        emit(io, scanId, 'ai:tool_complete', { tool: 'crt_sh', status: 'success' });
+        await updateProgress(scanId, 'subdomain_enum', 32, 'Found ' + subdomains.length + ' subdomains');
+        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_enum', status: 'completed' });
+
+        logger.info('Phase 2 completed: ' + subdomains.length + ' subdomains found');
+      }
+    } catch (err) {
+      logger.warn('Phase 2 (crt.sh) failed: ' + err.message);
+      await updateProgress(scanId, 'subdomain_enum', 32, 'Subdomain enumeration failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_enum', status: 'failed' });
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'subdomain',
+            status: 'failed',
+            tools: ['crt_sh'],
+            results: { error: err.message },
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 3 — DNS Records via Node.js dns.promises (34% → 42%)
+       ═══════════════════════════════════════════ */
+    var dnsResults = {};
+    try {
+      var skipDNS = isIP(cleanTarget);
+      if (skipDNS) {
+        // Reverse DNS for IP
+        await updateProgress(scanId, 'dns_resolution', 34, 'Performing reverse DNS lookup...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'running' });
+
+        try {
+          var reverseNames = await dns.reverse(cleanTarget);
+          dnsResults = { reverse: reverseNames, ip: cleanTarget };
+        } catch (e) {
+          dnsResults = { reverse: [], ip: cleanTarget, error: e.message };
+        }
+      } else {
+        await updateProgress(scanId, 'dns_resolution', 34, 'Resolving DNS records...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'running' });
+
+        logger.info('Phase 3: DNS resolution — domain=' + cleanTarget);
+
+        var dnsQueries = [
+          { type: 'A', fn: dns.resolve4(cleanTarget).catch(function () { return []; }) },
+          { type: 'AAAA', fn: dns.resolve6(cleanTarget).catch(function () { return []; }) },
+          { type: 'MX', fn: dns.resolveMx(cleanTarget).catch(function () { return []; }) },
+          { type: 'NS', fn: dns.resolveNs(cleanTarget).catch(function () { return []; }) },
+          { type: 'TXT', fn: dns.resolveTxt(cleanTarget).catch(function () { return []; }) },
+          { type: 'CNAME', fn: dns.resolveCname(cleanTarget).catch(function () { return []; }) },
+        ];
+
+        var dnsSettled = await Promise.allSettled(dnsQueries.map(function (q) { return q.fn; }));
+
+        for (var di = 0; di < dnsQueries.length; di++) {
+          var result = dnsSettled[di];
+          if (result.status === 'fulfilled') {
+            dnsResults[dnsQueries[di].type] = result.value;
+          } else {
+            dnsResults[dnsQueries[di].type] = [];
+          }
+        }
+      }
+
+      completedScans.push({ tool: 'dns_resolver', status: 'success', data: dnsResults });
+      usedTools.push('dns_resolver');
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'recon',
+            status: 'completed',
+            tools: ['dns_resolver'],
+            results: dnsResults,
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
+
+      emit(io, scanId, 'ai:tool_complete', { tool: 'dns_resolver', status: 'success' });
+      await updateProgress(scanId, 'dns_resolution', 42, 'DNS resolution complete');
+      emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'completed' });
+
+      logger.info('Phase 3 completed: DNS records resolved');
+    } catch (err) {
+      logger.warn('Phase 3 (DNS) failed: ' + err.message);
+      await updateProgress(scanId, 'dns_resolution', 42, 'DNS resolution failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'failed' });
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'recon',
+            status: 'failed',
+            tools: ['dns_resolver'],
+            results: { error: err.message },
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 4 — Nmap Port Scan (44% → 60%)
+       ═══════════════════════════════════════════ */
+    var nmapResults = { openPorts: [], raw: '' };
+    try {
+      await updateProgress(scanId, 'nmap_scan', 44, 'Running Nmap port scan...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'running' });
+      emit(io, scanId, 'ai:tool_running', { tool: 'nmap' });
+
+      // Determine scan target: prefer resolved IP for domains
+      var nmapTarget = cleanTarget;
+      if (!isIP(cleanTarget) && dnsResults.A && dnsResults.A.length > 0) {
+        nmapTarget = dnsResults.A[0];
+      }
+
+      var nmapBin = process.env.NMAP_BIN || 'nmap';
+      logger.info('Phase 4: Nmap scan — target=' + nmapTarget + ' bin=' + nmapBin);
+
+      var nmapOutput = await spawnTool(nmapBin, ['-sV', '-Pn', '--top-ports', '1000', nmapTarget], 180000);
+
+      if (!nmapOutput.installed) {
+        logger.warn('Nmap not installed — skipping port scan');
+        nmapResults = { installed: false };
+
+        completedScans.push({ tool: 'nmap', status: 'skipped', data: { installed: false, reason: 'Nmap not installed' } });
+        usedTools.push('nmap');
+
+        await ScanSession.findByIdAndUpdate(scanId, {
+          $push: {
+            phases: {
+              name: 'network',
+              status: 'skipped',
+              tools: ['nmap'],
+              results: { installed: false },
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            },
+          },
+        });
+      } else {
+        // Parse open ports from nmap output
+        var openPorts = [];
+        var nmapLines = nmapOutput.stdout.split('\n');
+        var portRegex = /^(\d+)\/(tcp|udp)\s+open\s+(\S+)\s*(.*)?$/;
+
+        for (var pi = 0; pi < nmapLines.length; pi++) {
+          var match = nmapLines[pi].trim().match(portRegex);
+          if (match) {
+            openPorts.push({
+              port: parseInt(match[1], 10),
+              protocol: match[2],
+              service: match[3],
+              version: (match[4] || '').trim(),
+            });
+          }
+        }
+
+        nmapResults = {
+          installed: true,
+          openPorts: openPorts,
+          portCount: openPorts.length,
+          raw: nmapOutput.stdout.slice(0, 3000),
+          exitCode: nmapOutput.exitCode,
+          timedOut: nmapOutput.timedOut,
+        };
+
+        completedScans.push({ tool: 'nmap', status: 'success', data: nmapResults });
+        usedTools.push('nmap');
+
+        await ScanSession.findByIdAndUpdate(scanId, {
+          $push: {
+            phases: {
+              name: 'network',
+              status: 'completed',
+              tools: ['nmap'],
+              results: { openPorts: openPorts.length, ports: openPorts.slice(0, 20) },
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            },
+          },
+        });
+
+        logger.info('Phase 4 completed: ' + openPorts.length + ' open ports found');
+      }
+
+      emit(io, scanId, 'ai:tool_complete', { tool: 'nmap', status: nmapResults.installed === false ? 'skipped' : 'success' });
+      await updateProgress(scanId, 'nmap_scan', 60, nmapResults.installed === false ? 'Nmap not installed, skipped' : 'Nmap scan complete — ' + (nmapResults.openPorts || []).length + ' ports open');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: nmapResults.installed === false ? 'skipped' : 'completed' });
+    } catch (err) {
+      logger.warn('Phase 4 (Nmap) failed: ' + err.message);
+      await updateProgress(scanId, 'nmap_scan', 60, 'Nmap scan failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'failed' });
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'network',
+            status: 'failed',
+            tools: ['nmap'],
+            results: { error: err.message },
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 5 — Nikto Web Scan (62% → 72%)
+       ═══════════════════════════════════════════ */
+    var niktoResults = { findings: [], raw: '' };
+    try {
+      // Determine whether to run Nikto
+      var webPorts = [80, 443, 8080, 8443, 8000, 8888, 3000];
+      var hasWebPort = false;
+      var nmapOpenPorts = (nmapResults && nmapResults.openPorts) || [];
+      for (var wp = 0; wp < nmapOpenPorts.length; wp++) {
+        if (webPorts.indexOf(nmapOpenPorts[wp].port) !== -1) {
+          hasWebPort = true;
+          break;
+        }
+      }
+
+      var shouldRunNikto = (scope !== 'network') && (hasWebPort || scope === 'web' || nmapResults.installed === false);
+
+      if (!shouldRunNikto) {
+        logger.info('Phase 5: Skipping Nikto — no web ports detected and scope is not web');
+        await updateProgress(scanId, 'nikto_scan', 72, 'Nikto skipped (no web ports or network-only scope)');
+
+        completedScans.push({ tool: 'nikto', status: 'skipped', data: { reason: 'No web ports detected' } });
+        usedTools.push('nikto');
+
+        await ScanSession.findByIdAndUpdate(scanId, {
+          $push: {
+            phases: {
+              name: 'webapp',
+              status: 'skipped',
+              tools: ['nikto'],
+              results: { reason: 'No web ports detected' },
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            },
+          },
+        });
+      } else {
+        await updateProgress(scanId, 'nikto_scan', 62, 'Running Nikto web vulnerability scan...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'running' });
+        emit(io, scanId, 'ai:tool_running', { tool: 'nikto' });
+
+        var niktoBin = process.env.NIKTO_BIN || 'nikto';
+        var niktoTarget = 'http://' + cleanTarget;
+        logger.info('Phase 5: Nikto scan — target=' + niktoTarget + ' bin=' + niktoBin);
+
+        var niktoOutput = await spawnTool(niktoBin, ['-h', niktoTarget, '-nointeractive'], 180000);
+
+        if (!niktoOutput.installed) {
+          logger.warn('Nikto not installed — skipping web scan');
+          niktoResults = { installed: false };
+
+          completedScans.push({ tool: 'nikto', status: 'skipped', data: { installed: false, reason: 'Nikto not installed' } });
+          usedTools.push('nikto');
+
+          await ScanSession.findByIdAndUpdate(scanId, {
+            $push: {
+              phases: {
+                name: 'webapp',
+                status: 'skipped',
+                tools: ['nikto'],
+                results: { installed: false },
+                startedAt: new Date(),
+                finishedAt: new Date(),
+              },
+            },
+          });
+        } else {
+          // Parse Nikto findings from lines starting with '+ '
+          var niktoFindings = [];
+          var niktoLines = niktoOutput.stdout.split('\n');
+          for (var nk = 0; nk < niktoLines.length; nk++) {
+            var line = niktoLines[nk].trim();
+            if (line.indexOf('+ ') === 0 && line.length > 10) {
+              var finding = line.substring(2).trim();
+              // Filter out informational lines like "+ Target IP:"
+              if (finding.indexOf('Target IP:') === -1 &&
+                  finding.indexOf('Target Hostname:') === -1 &&
+                  finding.indexOf('Target Port:') === -1 &&
+                  finding.indexOf('Start Time:') === -1 &&
+                  finding.indexOf('End Time:') === -1 &&
+                  finding.indexOf('host(s) tested') === -1) {
+                niktoFindings.push(finding);
+              }
+            }
+          }
+
+          niktoResults = {
+            installed: true,
+            findings: niktoFindings,
+            findingCount: niktoFindings.length,
+            raw: niktoOutput.stdout.slice(0, 3000),
+            exitCode: niktoOutput.exitCode,
+            timedOut: niktoOutput.timedOut,
+          };
+
+          completedScans.push({ tool: 'nikto', status: 'success', data: niktoResults });
+          usedTools.push('nikto');
+
+          await ScanSession.findByIdAndUpdate(scanId, {
+            $push: {
+              phases: {
+                name: 'webapp',
+                status: 'completed',
+                tools: ['nikto'],
+                results: { findingCount: niktoFindings.length, findings: niktoFindings.slice(0, 20) },
+                startedAt: new Date(),
+                finishedAt: new Date(),
+              },
+            },
+          });
+
+          logger.info('Phase 5 completed: ' + niktoFindings.length + ' Nikto findings');
+        }
+
+        emit(io, scanId, 'ai:tool_complete', { tool: 'nikto', status: (niktoResults.installed === false) ? 'skipped' : 'success' });
+        await updateProgress(scanId, 'nikto_scan', 72, (niktoResults.installed === false) ? 'Nikto not installed, skipped' : 'Nikto scan complete — ' + (niktoResults.findings || []).length + ' findings');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: (niktoResults.installed === false) ? 'skipped' : 'completed' });
+      }
+    } catch (err) {
+      logger.warn('Phase 5 (Nikto) failed: ' + err.message);
+      await updateProgress(scanId, 'nikto_scan', 72, 'Nikto scan failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'failed' });
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'webapp',
+            status: 'failed',
+            tools: ['nikto'],
+            results: { error: err.message },
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 6 — NVD + Vulners Enrichment (62% → 72%)
+       ═══════════════════════════════════════════ */
+    var nvdEnrichmentData = [];
+    try {
+      await updateProgress(scanId, 'nvd_enrichment', 62, 'Enriching findings with NVD + Vulners data...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'running' });
+      emit(io, scanId, 'ai:tool_running', { tool: 'nvd_vulners' });
+
+      logger.info('Phase 6: NVD/Vulners enrichment — searching for real-world CVE data');
+
+      // Search NVD for services found in scan results
+      var serviceKeywords = [];
+      var nmapOpenPorts2 = (nmapResults && nmapResults.openPorts) || [];
+      for (var sk = 0; sk < nmapOpenPorts2.length; sk++) {
+        var p2 = nmapOpenPorts2[sk];
+        if (p2.service && p2.version) {
+          serviceKeywords.push(p2.service + ' ' + p2.version);
+        }
+      }
+
+      // Search NVD for each detected service
+      for (var sw = 0; sw < Math.min(serviceKeywords.length, 3); sw++) {
+        try {
+          var nvdResults = await nvdVulners.nvdKeywordSearch(serviceKeywords[sw]);
+          if (nvdResults.length > 0) {
+            nvdEnrichmentData.push({ keyword: serviceKeywords[sw], cves: nvdResults });
+          }
+          await new Promise(function(r) { setTimeout(r, 700); }); // NVD rate limit
+        } catch (e) { logger.warn('NVD search failed for ' + serviceKeywords[sw]); }
+      }
+
+      // Vulners search for the target
+      try {
+        var vulnersResults = await nvdVulners.vulnersSearch(cleanTarget);
+        if (vulnersResults.length > 0) {
+          nvdEnrichmentData.push({ source: 'vulners_target', data: vulnersResults });
+        }
+      } catch (e) { logger.warn('Vulners search failed: ' + e.message); }
+
+      completedScans.push({ tool: 'nvd_vulners', status: 'success', data: { enrichmentCount: nvdEnrichmentData.length } });
+      usedTools.push('nvd_vulners');
+
+      emit(io, scanId, 'ai:tool_complete', { tool: 'nvd_vulners', status: 'success' });
+      await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment complete — ' + nvdEnrichmentData.length + ' enrichments');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'completed' });
+
+      logger.info('Phase 6 completed: ' + nvdEnrichmentData.length + ' NVD/Vulners enrichments');
+    } catch (err) {
+      logger.warn('Phase 6 (NVD/Vulners) failed: ' + err.message);
+      await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'failed' });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 7 — Gemini AI Analysis (74% → 82%)
+       ═══════════════════════════════════════════ */
+    try {
+      await updateProgress(scanId, 'ai_analysis', 74, 'AI analyzing scan results...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'running' });
+      emit(io, scanId, 'ai:thinking', { iteration: 1, maxIterations: 1 });
+
+      logger.info('Phase 7: Gemini AI analysis — ' + completedScans.length + ' scan results to analyze');
+
+      var aiDecision = await gemini.analyzeAndDecide({
+        target: cleanTarget,
+        scope: scope,
+        iteration: 1,
+        maxIterations: 1,
+        completedScans: completedScans,
+        usedTools: usedTools,
+      });
+
+      // Extract AI-identified vulnerabilities
+      if (aiDecision && Array.isArray(aiDecision.currentFindings)) {
+        for (var fi = 0; fi < aiDecision.currentFindings.length; fi++) {
+          allVulnerabilities.push(aiDecision.currentFindings[fi]);
+        }
+      }
+
+      var decisionRecord = {
+        iteration: 1,
+        promptSummary: 'Analyzed ' + completedScans.length + ' scan results across ' + usedTools.length + ' tools',
+        response: aiDecision,
+        reasoning: (aiDecision && aiDecision.reasoning) || '',
+        action: (aiDecision && aiDecision.nextAction) || 'generate_report',
+        riskLevel: (aiDecision && aiDecision.riskLevel) || 'info',
+        timestamp: new Date(),
+      };
+      allDecisions.push(decisionRecord);
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        currentIteration: 1,
+        $push: { aiDecisions: decisionRecord },
+      });
+
+      emit(io, scanId, 'ai:decision', { iteration: 1, decision: decisionRecord });
+      emit(io, scanId, 'ai:tool_complete', { tool: 'gemini_analysis', status: 'success' });
+      await updateProgress(scanId, 'ai_analysis', 82, 'AI analysis complete — ' + allVulnerabilities.length + ' vulnerabilities identified');
+      emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'completed' });
+
+      logger.info('Phase 7 completed: ' + allVulnerabilities.length + ' vulns, risk=' + ((aiDecision && aiDecision.riskLevel) || 'info'));
+    } catch (err) {
+      logger.warn('Phase 7 (Gemini Analysis) failed: ' + err.message);
+      await updateProgress(scanId, 'ai_analysis', 82, 'AI analysis failed, proceeding to report...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'failed' });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 8 — MITRE ATT&CK Mapping + NVD Enrichment (83% → 88%)
+       ═══════════════════════════════════════════ */
+    var mitreMapping = { chain: [], mappedVulns: [], tactics: [] };
+    var riskCalc = { score: 0, level: 'info', breakdown: {}, explanation: '' };
+    try {
+      await updateProgress(scanId, 'mitre_mapping', 83, 'Mapping to MITRE ATT&CK framework...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'mitre_mapping', status: 'running' });
+
+      logger.info('Phase 8: MITRE ATT&CK mapping + risk calculation — ' + allVulnerabilities.length + ' vulns');
+
+      // Map all vulnerabilities to MITRE ATT&CK
+      mitreMapping = mitreAttack.generateAttackChain(allVulnerabilities);
+
+      // Add MITRE mapping to each vulnerability
+      for (var mi = 0; mi < allVulnerabilities.length; mi++) {
+        var vulnMitre = mitreAttack.mapVulnToAttack(allVulnerabilities[mi]);
+        allVulnerabilities[mi].mitreMapping = vulnMitre;
+      }
+
+      // Enrich vulnerabilities with NVD data (CVSS, descriptions, exploit check)
+      allVulnerabilities = await nvdVulners.enrichVulnerabilities(allVulnerabilities);
+
+      // Calculate real risk score
+      riskCalc = nvdVulners.calculateRealRiskScore(cleanTarget, allVulnerabilities, threatIntelResults);
+
+      completedScans.push({ tool: 'mitre_mapping', status: 'success', data: { tacticsCount: mitreMapping.chain.length, coverage: mitreMapping.coveragePercent } });
+
+      emit(io, scanId, 'ai:tool_complete', { tool: 'mitre_mapping', status: 'success' });
+      await updateProgress(scanId, 'mitre_mapping', 88, 'MITRE mapping complete — ' + mitreMapping.chain.length + ' tactics, Risk: ' + riskCalc.score + '/100');
+      emit(io, scanId, 'ai:phase_update', { phase: 'mitre_mapping', status: 'completed' });
+
+      logger.info('Phase 8 completed: ' + mitreMapping.chain.length + ' ATT&CK tactics, risk=' + riskCalc.score);
+    } catch (err) {
+      logger.warn('Phase 8 (MITRE/Enrichment) failed: ' + err.message);
+      await updateProgress(scanId, 'mitre_mapping', 88, 'MITRE mapping failed, continuing...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'mitre_mapping', status: 'failed' });
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 9 — Report Generation (89% → 100%)
+       ═══════════════════════════════════════════ */
+    await updateProgress(scanId, 'report_generation', 89, 'Generating penetration test report...');
     emit(io, scanId, 'ai:phase_update', { phase: 'report', status: 'running' });
 
-    const report = await gemini.generateReport({
-      target,
-      scope,
-      completedScans,
-      vulnerabilities: allVulnerabilities,
-      aiDecisions: allDecisions,
-    });
+    logger.info('Phase 9: Report generation — vulns=' + allVulnerabilities.length + ' scans=' + completedScans.length);
 
-    const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-    (report.findings || []).forEach((f) => {
-      if (severityCounts[f.severity] !== undefined) severityCounts[f.severity]++;
-    });
+    var report = {};
+    try {
+      report = await gemini.generateReport({
+        target: cleanTarget,
+        scope: scope,
+        completedScans: completedScans,
+        vulnerabilities: allVulnerabilities,
+        aiDecisions: allDecisions,
+        nvdEnrichment: nvdEnrichmentData,
+        mitreMapping: mitreMapping,
+      });
+    } catch (err) {
+      logger.warn('Report generation failed: ' + err.message);
+      report = {
+        executiveSummary: 'Automated penetration test completed for ' + cleanTarget + '. AI report generation encountered an error. Please review raw scan data.',
+        riskScore: riskCalc.score || 0,
+        overallRiskLevel: riskCalc.level || 'info',
+        findings: allVulnerabilities,
+        mitreAttackSummary: mitreAttack.getAttackNarrative(allVulnerabilities),
+        recommendations: ['Review scan results manually', 'Re-run scan with valid Gemini API key'],
+        methodology: 'Automated OSINT + active scanning + NVD/Vulners enrichment + MITRE ATT&CK mapping',
+        conclusion: 'Report generation incomplete. Review raw data.',
+      };
+    }
 
-    const finalSession = await ScanSession.findByIdAndUpdate(
+    // Use real risk score from NVD/Vulners calculation if Gemini score is 0
+    var finalRiskScore = (report && report.riskScore && report.riskScore > 0) ? report.riskScore : riskCalc.score;
+
+    // Calculate severity counts from report findings
+    var severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    var reportFindings = (report && report.findings) || [];
+    for (var si = 0; si < reportFindings.length; si++) {
+      var sev = reportFindings[si].severity;
+      if (severityCounts[sev] !== undefined) {
+        severityCounts[sev]++;
+      }
+    }
+
+    // Merge: prefer report findings (richer), fall back to raw vulns
+    var finalFindings = (reportFindings.length > 0) ? reportFindings : allVulnerabilities;
+
+    // Final session update
+    var finalSession = await ScanSession.findByIdAndUpdate(
       scanId,
       {
         status: 'completed',
+        currentPhase: 'completed',
+        progress: 100,
+        currentMessage: 'Scan complete',
         report: {
-          executiveSummary: report.executiveSummary || '',
-          technicalDetails: report.methodology || '',
-          riskScore: report.riskScore || 0,
-          recommendations: report.recommendations || [],
+          executiveSummary: (report && report.executiveSummary) || '',
+          technicalDetails: (report && report.methodology) || '',
+          riskScore: finalRiskScore,
+          recommendations: (report && report.recommendations) || [],
           generatedAt: new Date(),
+          mitreAttackSummary: (report && report.mitreAttackSummary) || mitreAttack.getAttackNarrative(allVulnerabilities),
+          mitreAttackMapping: mitreMapping,
+          riskBreakdown: riskCalc,
         },
-        vulnerabilities: (report.findings || []).map((f) => ({
-          title: f.title || 'Untitled',
-          type: f.type || 'unknown',
-          severity: f.severity || 'info',
-          cvss: f.cvss || 0,
-          description: f.description || '',
-          evidence: f.evidence || '',
-          remediation: f.remediation || '',
-          cveId: f.cveId || '',
-          tool: f.tool || '',
-        })),
+        vulnerabilities: finalFindings.map(function (f) {
+          return {
+            title: (f && f.title) || 'Untitled',
+            type: (f && f.type) || 'unknown',
+            severity: (f && f.severity) || 'info',
+            cvss: (f && f.cvss) || 0,
+            description: (f && f.description) || '',
+            evidence: (f && f.evidence) || '',
+            remediation: (f && f.remediation) || '',
+            cveId: (f && f.cveId) || '',
+            tool: (f && f.tool) || '',
+            mitreMapping: (f && f.mitreMapping) || [],
+            nvdData: (f && f.nvdData) || null,
+            exploitAvailable: (f && f.exploitAvailable) || false,
+            exploitData: (f && f.exploitData) || null,
+            relatedCVEs: (f && f.relatedCVEs) || [],
+          };
+        }),
         finishedAt: new Date(),
       },
       { new: true }
     );
 
     emit(io, scanId, 'ai:completed', {
-      report,
-      severityCounts,
-      riskScore: report.riskScore || 0,
-      vulnerabilityCount: (report.findings || []).length,
+      report: report,
+      severityCounts: severityCounts,
+      riskScore: finalRiskScore,
+      vulnerabilityCount: finalFindings.length,
+      mitreMapping: mitreMapping,
+      riskBreakdown: riskCalc,
     });
 
-    logger.info(`AI Agent completed: scanId=${scanId} vulns=${(report.findings || []).length} score=${report.riskScore}`);
+    await updateProgress(scanId, 'completed', 100, 'Scan complete — Risk Score: ' + finalRiskScore + '/100');
+    emit(io, scanId, 'ai:phase_update', { phase: 'report', status: 'completed' });
+
+    logger.info('AI Agent completed: scanId=' + scanId + ' vulns=' + finalFindings.length + ' score=' + finalRiskScore);
     return finalSession;
+
   } catch (err) {
-    logger.error(`AI Agent failed: scanId=${scanId} error=${err.message}`);
-    await ScanSession.findByIdAndUpdate(scanId, { status: 'failed', finishedAt: new Date() });
+    logger.error('AI Agent failed: scanId=' + scanId + ' error=' + err.message);
+    await ScanSession.findByIdAndUpdate(scanId, {
+      status: 'failed',
+      currentPhase: 'failed',
+      progress: 0,
+      currentMessage: 'Scan failed: ' + err.message,
+      finishedAt: new Date(),
+    });
     emit(io, scanId, 'ai:failed', { reason: err.message });
     throw err;
   }
 };
 
+
+/**
+ * Quick scan — only uses built-in API tools (no CLI), fast results
+ */
+const runQuickScan = async ({ scanId, userId, target, io }) => {
+  var cleanTarget = extractDomain(target);
+
+  await ScanSession.findByIdAndUpdate(scanId, {
+    status: 'running',
+    currentPhase: 'quick_scan',
+    progress: 10,
+    currentMessage: 'Running quick scan...',
+  });
+
+  logger.info('Quick scan started: scanId=' + scanId + ' target=' + cleanTarget);
+  emit(io, scanId, 'ai:started', { target: cleanTarget, scope: 'recon-only', startedAt: new Date() });
+
+  try {
+    emit(io, scanId, 'ai:phase_update', { phase: 'quick_scan', status: 'running' });
+    await updateProgress(scanId, 'quick_scan', 20, 'Running threat intelligence APIs...');
+
+    var threatIntelResults = await threatIntel.runAllThreatIntel(cleanTarget);
+
+    await updateProgress(scanId, 'quick_scan', 50, 'Threat intel complete, generating report...');
+    emit(io, scanId, 'ai:phase_update', { phase: 'quick_scan', status: 'completed' });
+    emit(io, scanId, 'ai:phase_update', { phase: 'report', status: 'running' });
+
+    var report = await gemini.generateReport({
+      target: cleanTarget,
+      scope: 'recon-only',
+      completedScans: [
+        { tool: 'threat_intel_apis', status: 'success', data: threatIntelResults },
+      ],
+      vulnerabilities: [],
+      aiDecisions: [],
+    });
+
+    var finalFindings = (report && report.findings && report.findings.length > 0) ? report.findings : [];
+
+    var finalSession = await ScanSession.findByIdAndUpdate(
+      scanId,
+      {
+        status: 'completed',
+        currentPhase: 'completed',
+        progress: 100,
+        currentMessage: 'Quick scan complete',
+        threatIntelResults: threatIntelResults,
+        report: {
+          executiveSummary: (report && report.executiveSummary) || '',
+          technicalDetails: (report && report.methodology) || '',
+          riskScore: (report && report.riskScore) || 0,
+          recommendations: (report && report.recommendations) || [],
+          generatedAt: new Date(),
+        },
+        vulnerabilities: finalFindings.map(function (f) {
+          return {
+            title: (f && f.title) || 'Untitled',
+            type: (f && f.type) || 'unknown',
+            severity: (f && f.severity) || 'info',
+            cvss: (f && f.cvss) || 0,
+            description: (f && f.description) || '',
+            evidence: (f && f.evidence) || '',
+            remediation: (f && f.remediation) || '',
+            cveId: (f && f.cveId) || '',
+            tool: (f && f.tool) || '',
+          };
+        }),
+        phases: [
+          { name: 'recon', status: 'completed', tools: ['threat_intel_apis'], results: {}, startedAt: new Date(), finishedAt: new Date() },
+          { name: 'report', status: 'completed', tools: ['gemini'], results: {}, startedAt: new Date(), finishedAt: new Date() },
+        ],
+        finishedAt: new Date(),
+      },
+      { new: true }
+    );
+
+    emit(io, scanId, 'ai:completed', {
+      report: report,
+      riskScore: (report && report.riskScore) || 0,
+      vulnerabilityCount: finalFindings.length,
+    });
+
+    logger.info('Quick scan completed: scanId=' + scanId);
+    return finalSession;
+  } catch (err) {
+    logger.error('Quick scan failed: scanId=' + scanId + ' error=' + err.message);
+    await ScanSession.findByIdAndUpdate(scanId, {
+      status: 'failed',
+      currentPhase: 'failed',
+      progress: 0,
+      currentMessage: 'Quick scan failed: ' + err.message,
+      finishedAt: new Date(),
+    });
+    emit(io, scanId, 'ai:failed', { reason: err.message });
+    throw err;
+  }
+};
+
+
 /**
  * Stop a running scan
  */
 const stopAIAgent = async (scanId, userId) => {
-  const session = await ScanSession.findOneAndUpdate(
-    { _id: scanId, user_id: userId, status: 'running' },
-    { status: 'stopped', finishedAt: new Date() },
+  var session = await ScanSession.findOneAndUpdate(
+    { _id: scanId, user_id: userId, status: { $in: ['running', 'queued'] } },
+    {
+      status: 'stopped',
+      currentPhase: 'stopped',
+      currentMessage: 'Scan stopped by user',
+      finishedAt: new Date(),
+    },
     { new: true }
   );
   return session;
 };
 
+
 module.exports = {
-  runAIAgent,
-  stopAIAgent,
+  runAIAgent: runAIAgent,
+  runQuickScan: runQuickScan,
+  stopAIAgent: stopAIAgent,
 };

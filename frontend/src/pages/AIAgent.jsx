@@ -3,12 +3,16 @@ import { io } from 'socket.io-client';
 import {
   BrainCircuit, Play, Loader2, Square, Download, Trash2,
   CheckCircle2, AlertTriangle, Shield, ChevronDown, ChevronUp,
-  Zap, Search, Globe, Clock, Activity, Cpu, Terminal, Eye,
-  Skull, Briefcase, Wrench, GitBranch, Sparkles, ArrowRight,
+  Zap, Globe, Clock, Activity,
+  Skull, Briefcase, Wrench, GitBranch, Sparkles,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import Layout from '../components/layout';
-import { startAIScan, getAIScanStatus, stopAIScan, getAIScanHistory, deleteAIScan } from '../api/aiAgent.api';
+import {
+  startAIScan, getAIScanStatus, stopAIScan,
+  getAIScanHistory, deleteAIScan, explainAIScan, downloadReportPdf
+} from '../api/aiAgent.api';
 
 const SOCKET_URL = (() => {
   const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
@@ -27,7 +31,12 @@ const ThinkingStep = ({ step, index, isLatest }) => {
     : isLatest ? 'running' : 'done';
 
   return (
-    <div className="ai-step">
+    <motion.div 
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 25 }}
+      className="ai-step"
+    >
       <div className={`ai-step-indicator ${statusClass}`}>{statusIcon}</div>
       <div className="ai-step-content">
         <div className="ai-step-title">
@@ -53,7 +62,7 @@ const ThinkingStep = ({ step, index, isLatest }) => {
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 };
 
@@ -69,8 +78,9 @@ const AIAgent = () => {
   const [liveIteration, setLiveIteration] = useState(0);
   const [expandedVuln, setExpandedVuln] = useState({});
   const [explainMode, setExplainMode] = useState(null);
-  const [explainText, setExplainText] = useState('');
+  const [explainData, setExplainData] = useState(null);
   const [explainLoading, setExplainLoading] = useState(false);
+  const [explainText, setExplainText] = useState('');
   const socketRef = useRef(null);
   const pollRef = useRef(null);
   const thinkingRef = useRef(null);
@@ -135,7 +145,7 @@ const AIAgent = () => {
   const handleStart = async () => {
     const target = targetInput.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
     if (!target) { toast.error('Enter a target domain or IP'); return; }
-    setLoading(true); setSession(null); setDecisions([]); setLivePhase('Queuing...'); setLiveIteration(0); setExplainMode(null); setExplainText('');
+    setLoading(true); setSession(null); setDecisions([]); setLivePhase('Queuing...'); setLiveIteration(0); setExplainMode(null); setExplainData(null); setExplainText('');
     try {
       const res = await startAIScan(target, scope);
       if (!res.scanId) throw new Error('No scanId received');
@@ -160,42 +170,56 @@ const AIAgent = () => {
     try { await deleteAIScan(id); refreshHistory(); toast.success('Deleted'); } catch { toast.error('Failed to delete'); }
   };
 
-  const downloadReport = () => {
-    if (!session) return;
-    const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `paia-report-${session.target}-${Date.now()}.json`; a.click();
-    URL.revokeObjectURL(url);
+  const downloadReport = async () => {
+    if (!session?._id) return;
+    try {
+      toast.success('Preparing PDF Document...', { icon: '📄' });
+      await downloadReportPdf(session._id);
+    } catch {
+      toast.error('Failed to download PDF');
+    }
   };
 
+  /* ── REAL AI EXPLAIN via Gemini ── */
   const handleExplain = async (mode) => {
-    if (!session) return;
-    setExplainMode(mode); setExplainLoading(true); setExplainText('');
-    // Simulated AI explanation — in production this calls backend
-    const explanations = {
-      hacker: `[TECHNICAL ANALYSIS]\n\nTarget: ${session.target}\nAttack Surface: ${session.vulnerabilities?.length || 0} vectors identified\n\n${session.vulnerabilities?.map((v, i) =>
-        `${i + 1}. ${v.title} [${v.severity?.toUpperCase()}]\n   CVSS: ${v.cvss || 'N/A'}\n   Vector: ${v.tool || 'AI Analysis'}\n   Exploit: ${v.description || 'Manual verification needed'}\n   Remediation: ${v.remediation || 'Patch immediately'}`
-      ).join('\n\n') || 'No vulnerabilities found.'}\n\n[EXPLOIT CHAIN]\n→ Recon → Port Discovery → Service Enumeration → Vulnerability Mapping → Exploitation Path`,
-      manager: `EXECUTIVE SECURITY BRIEFING\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nTarget: ${session.target}\nRisk Level: ${session.report?.overallRiskLevel?.toUpperCase() || 'MODERATE'}\nRisk Score: ${session.report?.riskScore || 0}/100\n\nBusiness Impact:\n• ${session.vulnerabilities?.filter(v => v.severity === 'critical').length || 0} CRITICAL issues require immediate attention\n• Estimated remediation time: 2-5 business days\n• Potential data breach cost: $2.4M - $4.1M (industry average)\n\nRecommended Actions:\n1. Patch all critical vulnerabilities within 24 hours\n2. Implement WAF rules for detected attack vectors\n3. Schedule penetration re-test after remediation\n4. Update security policies for affected services`,
-      exploit: `ATTACK CHAIN ANALYSIS\n━━━━━━━━━━━━━━━━━━━━\n\n[Phase 1: Reconnaissance]\n→ DNS enumeration reveals infrastructure layout\n→ Open ports provide attack surface mapping\n\n[Phase 2: Initial Access]\n→ ${session.vulnerabilities?.[0]?.title || 'Service vulnerability'} provides entry point\n→ CVSS: ${session.vulnerabilities?.[0]?.cvss || 'N/A'}\n\n[Phase 3: Privilege Escalation]\n→ Service misconfigurations enable lateral movement\n→ Database exposure allows data extraction\n\n[Phase 4: Impact]\n→ Full system compromise possible\n→ Data exfiltration risk: HIGH\n→ Persistence mechanism available via SSH`,
-      fixes: `REMEDIATION PRIORITY LIST\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n${session.vulnerabilities?.map((v, i) =>
-        `[P${i + 1}] ${v.title}\n    Severity: ${v.severity?.toUpperCase()}\n    Fix: ${v.remediation || 'Apply security patch'}\n    Timeline: ${v.severity === 'critical' ? '24 hours' : v.severity === 'high' ? '72 hours' : '1 week'}`
-      ).join('\n\n') || 'No vulnerabilities to remediate.'}\n\nGENERAL RECOMMENDATIONS:\n• Enable automated security scanning (weekly)\n• Implement Web Application Firewall (WAF)\n• Enforce TLS 1.3 across all endpoints\n• Regular dependency updates and patch management`,
-    };
+    if (!session || !session._id) {
+      toast.error('No scan session to explain');
+      return;
+    }
 
-    // Simulate typing effect
-    const fullText = explanations[mode] || 'No data available.';
-    let index = 0;
-    const typeInterval = setInterval(() => {
-      index += Math.floor(Math.random() * 3) + 2;
-      if (index >= fullText.length) {
-        setExplainText(fullText);
-        setExplainLoading(false);
-        clearInterval(typeInterval);
-      } else {
-        setExplainText(fullText.slice(0, index));
+    setExplainMode(mode);
+    setExplainLoading(true);
+    setExplainData(null);
+    setExplainText('');
+
+    try {
+      const result = await explainAIScan(session._id, mode);
+      const explanation = result.explanation;
+
+      if (!explanation || !explanation.content) {
+        throw new Error('Empty response from AI');
       }
-    }, 15);
+
+      setExplainData(explanation);
+
+      // Typing effect for the content
+      const fullText = explanation.content || '';
+      let index = 0;
+      const typeInterval = setInterval(() => {
+        index += Math.floor(Math.random() * 4) + 3;
+        if (index >= fullText.length) {
+          setExplainText(fullText);
+          setExplainLoading(false);
+          clearInterval(typeInterval);
+        } else {
+          setExplainText(fullText.slice(0, index));
+        }
+      }, 12);
+    } catch (err) {
+      setExplainLoading(false);
+      setExplainText(`Error: ${err?.response?.data?.message || err.message || 'Failed to get AI explanation'}`);
+      toast.error('AI explain failed — check Gemini API key');
+    }
   };
 
   const vulns = session?.vulnerabilities || [];
@@ -203,13 +227,18 @@ const AIAgent = () => {
 
   return (
     <Layout>
-      <div className="page-header">
-        <h2><BrainCircuit size={22} /> AI Agent</h2>
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="page-header">
+        <h2><BrainCircuit size={22} /> <span className="holographic-text">AI Agent</span></h2>
         <p>Autonomous penetration testing with multi-layer AI reasoning engine</p>
-      </div>
+      </motion.div>
 
       {/* ── Scan Control Panel ── */}
-      <div className="dark-card" style={{ marginBottom: 14 }}>
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }} 
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="dark-card" style={{ marginBottom: 14 }}
+      >
         <div className="card-title"><Zap size={13} /> Launch AI Scan</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <input
@@ -279,44 +308,59 @@ const AIAgent = () => {
             <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{livePhase}</span>
           </div>
         )}
-      </div>
+      </motion.div>
 
       {/* ── AI Thinking Panel ── */}
-      {decisions.length > 0 && (
-        <div className="ai-thinking-panel" style={{ marginBottom: 14 }}>
-          <div className="ai-thinking-header">
-            <div className="ai-thinking-title">
-              <BrainCircuit size={14} />
-              AI Reasoning Engine
-              {loading && <Loader2 size={12} className="spin" style={{ marginLeft: 8 }} />}
+      <AnimatePresence>
+        {decisions.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="ai-thinking-panel" style={{ marginBottom: 14, overflow: 'hidden' }}
+          >
+            <div className="ai-thinking-header">
+              <div className="ai-thinking-title">
+                <BrainCircuit size={14} />
+                AI Reasoning Engine
+                {loading && <Loader2 size={12} className="spin" style={{ marginLeft: 8 }} />}
+              </div>
+              <span style={{ fontSize: 10, color: 'var(--text3)', fontFamily: "'JetBrains Mono'" }}>
+                {decisions.length} decisions • iteration {liveIteration}
+              </span>
             </div>
-            <span style={{ fontSize: 10, color: 'var(--text3)', fontFamily: "'JetBrains Mono'" }}>
-              {decisions.length} decisions • iteration {liveIteration}
-            </span>
-          </div>
-          <div className="ai-thinking-body" ref={thinkingRef}>
-            {decisions.map((d, i) => (
-              <ThinkingStep key={i} step={d} index={i} isLatest={i === decisions.length - 1 && loading} />
-            ))}
-          </div>
-        </div>
-      )}
+            <div className="ai-thinking-body" ref={thinkingRef}>
+              {decisions.map((d, i) => (
+                <ThinkingStep key={i} step={d} index={i} isLatest={i === decisions.length - 1 && loading} />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* ── AI Action Buttons ── */}
-      {session && !loading && (
-        <div className="dark-card" style={{ marginBottom: 14 }}>
-          <div className="card-title"><Sparkles size={13} /> AI Intelligence Actions</div>
+      {/* ── AI Intelligence Actions (REAL Gemini calls) ── */}
+      <AnimatePresence>
+        {session && !loading && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="dark-card" style={{ marginBottom: 14 }}
+          >
+            <div className="card-title"><Sparkles size={13} /> AI Intelligence Actions</div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 10 }}>
+            Powered by Google Gemini — Real-time AI analysis of your scan results
+          </div>
           <div className="ai-actions">
-            <button className="ai-action-btn hacker" onClick={() => handleExplain('hacker')}>
+            <button className="ai-action-btn hacker" onClick={() => handleExplain('hacker')} disabled={explainLoading}>
               <Skull size={14} /> Explain like Hacker
             </button>
-            <button className="ai-action-btn manager" onClick={() => handleExplain('manager')}>
+            <button className="ai-action-btn manager" onClick={() => handleExplain('manager')} disabled={explainLoading}>
               <Briefcase size={14} /> Explain like Manager
             </button>
-            <button className="ai-action-btn exploit" onClick={() => handleExplain('exploit')}>
+            <button className="ai-action-btn exploit" onClick={() => handleExplain('exploit')} disabled={explainLoading}>
               <GitBranch size={14} /> Generate Exploit Chain
             </button>
-            <button className="ai-action-btn fix" onClick={() => handleExplain('fixes')}>
+            <button className="ai-action-btn fix" onClick={() => handleExplain('fixes')} disabled={explainLoading}>
               <Wrench size={14} /> Suggest Fixes
             </button>
           </div>
@@ -326,23 +370,66 @@ const AIAgent = () => {
               <div className="terminal-header">
                 <div className="terminal-dot red" /><div className="terminal-dot yellow" /><div className="terminal-dot green" />
                 <span className="terminal-title">
-                  paia-ai — {explainMode === 'hacker' ? 'Technical Analysis' : explainMode === 'manager' ? 'Executive Brief' : explainMode === 'exploit' ? 'Attack Chain' : 'Remediation Plan'}
+                  paia-ai ({explainLoading ? 'analyzing...' : 'complete'}) — {explainMode === 'hacker' ? 'Technical Analysis' : explainMode === 'manager' ? 'Executive Brief' : explainMode === 'exploit' ? 'Attack Chain' : 'Remediation Plan'}
                 </span>
+                {explainLoading && <Loader2 size={10} className="spin" style={{ marginLeft: 'auto', color: '#10b981' }} />}
               </div>
-              <div className="terminal-body" style={{ minHeight: 120 }}>
-                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: explainMode === 'hacker' ? 'var(--green)' : explainMode === 'exploit' ? 'var(--red)' : explainMode === 'manager' ? 'var(--cyan)' : 'var(--purple)' }}>
+              <div className="terminal-body" style={{ minHeight: 120, maxHeight: 400, overflowY: 'auto' }}>
+                {/* Highlights bar */}
+                {explainData?.highlights && !explainLoading && (
+                  <div style={{
+                    display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12,
+                    padding: '8px 10px', background: 'rgba(99,102,241,0.06)', borderRadius: 6,
+                    border: '1px solid rgba(99,102,241,0.1)',
+                  }}>
+                    {explainData.highlights.map((h, i) => (
+                      <span key={i} style={{
+                        fontSize: 10, color: 'var(--indigo-l)', fontWeight: 600,
+                        padding: '3px 8px', background: 'rgba(99,102,241,0.1)',
+                        borderRadius: 4, fontFamily: "'JetBrains Mono', monospace",
+                      }}>
+                        {h}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Risk verdict */}
+                {explainData?.riskVerdict && !explainLoading && (
+                  <div style={{
+                    fontSize: 11, color: 'var(--red)', fontWeight: 700, marginBottom: 10,
+                    padding: '6px 10px', background: 'rgba(255,59,92,0.06)', borderRadius: 6,
+                    border: '1px solid rgba(255,59,92,0.12)',
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}>
+                    ⚡ {explainData.riskVerdict}
+                  </div>
+                )}
+
+                {/* Analysis content */}
+                <pre style={{
+                  margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  color: explainMode === 'hacker' ? 'var(--green)' : explainMode === 'exploit' ? 'var(--red)' : explainMode === 'manager' ? 'var(--cyan)' : 'var(--purple)',
+                  fontSize: 11, lineHeight: 1.7,
+                }}>
                   {explainText}
                   {explainLoading && <span className="terminal-cursor" />}
                 </pre>
               </div>
             </div>
           )}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Vulnerabilities ── */}
       {vulns.length > 0 && (
-        <div className="dark-card" style={{ marginBottom: 14 }}>
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="dark-card" style={{ marginBottom: 14 }}
+        >
           <div className="card-title"><AlertTriangle size={13} /> Vulnerabilities ({vulns.length})</div>
           <div style={{ display: 'grid', gap: 8 }}>
             {vulns.map((v, i) => (
@@ -356,6 +443,11 @@ const AIAgent = () => {
                     <span className={`sev-badge ${v.severity}`}>{v.severity}</span>
                     <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700 }}>{v.title}</span>
                     {v.cvss > 0 && <span style={{ fontSize: 10, color: 'var(--text3)', fontFamily: "'JetBrains Mono'" }}>CVSS: {v.cvss}</span>}
+                    {v.exploitAvailable && (
+                      <span style={{ fontSize: 9, color: '#ef4444', fontWeight: 800, padding: '2px 6px', borderRadius: 4, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                        ⚠ EXPLOIT AVAILABLE
+                      </span>
+                    )}
                   </div>
                   <button onClick={() => setExpandedVuln(p => ({ ...p, [i]: !p[i] }))} style={{ border: 'none', background: 'transparent', color: 'var(--text3)', cursor: 'pointer' }}>
                     {expandedVuln[i] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -366,23 +458,48 @@ const AIAgent = () => {
                     {v.description && <div style={{ marginBottom: 4 }}><strong>Description:</strong> {v.description}</div>}
                     {v.evidence && <div style={{ marginBottom: 4 }}><strong>Evidence:</strong> {v.evidence}</div>}
                     {v.remediation && <div style={{ marginBottom: 4, color: 'var(--green)' }}><strong>Fix:</strong> {v.remediation}</div>}
-                    {v.cveId && <div><strong>CVE:</strong> {v.cveId}</div>}
-                    {v.tool && <div><strong>Found by:</strong> {v.tool}</div>}
+                    {v.cveId && <div style={{ marginBottom: 4 }}><strong>CVE:</strong> {v.cveId}</div>}
+                    {v.tool && <div style={{ marginBottom: 4 }}><strong>Found by:</strong> {v.tool}</div>}
+                    {v.mitreMapping && v.mitreMapping.length > 0 && (
+                      <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.1)' }}>
+                        <strong style={{ color: 'var(--indigo-l)', fontSize: 10 }}>MITRE ATT&CK:</strong>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                          {v.mitreMapping.map((m, mi) => (
+                            <span key={mi} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(99,102,241,0.1)', color: 'var(--indigo-l)', fontWeight: 600, fontFamily: "'JetBrains Mono'" }}>
+                              {m.tacticName} / {m.techniqueId}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       )}
 
-      {/* ── Report Summary ── */}
+      {/* ── Report Summary with MITRE + Risk Breakdown ── */}
       {report.executiveSummary && (
-        <div className="dark-card" style={{ marginBottom: 14 }}>
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="dark-card" style={{ marginBottom: 14 }}
+        >
           <div className="card-title"><Shield size={13} /> Report Summary</div>
+
+          {/* Risk Score + Severity Cards */}
           <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
-            <div style={{ textAlign: 'center', padding: '14px 22px', borderRadius: 12, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)' }}>
-              <div style={{ fontSize: 28, fontWeight: 900, color: 'var(--indigo-l)' }}>{report.riskScore || 0}</div>
+            <div style={{
+              textAlign: 'center', padding: '14px 22px', borderRadius: 12,
+              background: (report.riskScore || 0) >= 60 ? 'rgba(239,68,68,0.08)' : (report.riskScore || 0) >= 35 ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)',
+              border: `1px solid ${(report.riskScore || 0) >= 60 ? 'rgba(239,68,68,0.2)' : (report.riskScore || 0) >= 35 ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.2)'}`,
+            }}>
+              <div style={{
+                fontSize: 28, fontWeight: 900, lineHeight: 1,
+                color: (report.riskScore || 0) >= 60 ? '#ef4444' : (report.riskScore || 0) >= 35 ? '#f59e0b' : '#10b981',
+              }}>{report.riskScore || 0}</div>
               <div style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase' }}>Risk Score</div>
             </div>
             {['critical', 'high', 'medium', 'low'].map(sev => {
@@ -396,20 +513,102 @@ const AIAgent = () => {
               );
             })}
           </div>
+
+          {/* Risk Breakdown (NVD/Vulners based) */}
+          {session?.report?.riskBreakdown?.breakdown && (
+            <div style={{
+              padding: '10px 12px', borderRadius: 8, marginBottom: 12,
+              background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.1)',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 6 }}>Risk Score Breakdown (NVD + Vulners)</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Vuln Severity', value: session.report.riskBreakdown.breakdown.vulnScore || 0, max: 40, color: '#ef4444' },
+                  { label: 'Exploit Avail.', value: session.report.riskBreakdown.breakdown.exploitScore || 0, max: 30, color: '#f59e0b' },
+                  { label: 'Exposure', value: session.report.riskBreakdown.breakdown.exposureScore || 0, max: 30, color: '#6366f1' },
+                ].map(item => (
+                  <div key={item.label} style={{ flex: 1, minWidth: 100 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text3)', marginBottom: 3 }}>
+                      <span>{item.label}</span>
+                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{item.value}/{item.max}</span>
+                    </div>
+                    <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.06)' }}>
+                      <div style={{ height: '100%', borderRadius: 2, background: item.color, width: `${(item.value / item.max) * 100}%`, transition: 'width 0.5s' }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {session.report.riskBreakdown.explanation && (
+                <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 8, lineHeight: 1.5 }}>
+                  {session.report.riskBreakdown.explanation}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Executive Summary */}
           <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7, marginBottom: 14 }}>{report.executiveSummary}</div>
+
+          {/* MITRE ATT&CK Kill Chain */}
+          {session?.report?.mitreAttackMapping?.chain?.length > 0 && (
+            <div style={{
+              padding: '12px 14px', borderRadius: 10, marginBottom: 14,
+              background: 'rgba(239,68,68,0.03)', border: '1px solid rgba(239,68,68,0.1)',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--text)', textTransform: 'uppercase', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                🎯 MITRE ATT&CK Kill Chain ({session.report.mitreAttackMapping.coveragePercent || 0}% coverage)
+              </div>
+              <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+                {session.report.mitreAttackMapping.chain.map((tactic, ti) => (
+                  <div key={ti} style={{ display: 'flex', alignItems: 'center' }}>
+                    <div style={{
+                      padding: '6px 10px', borderRadius: 6, fontSize: 9, fontWeight: 700,
+                      background: ti === 0 ? 'rgba(99,102,241,0.12)' : ti === session.report.mitreAttackMapping.chain.length - 1 ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.1)',
+                      color: ti === 0 ? 'var(--indigo-l)' : ti === session.report.mitreAttackMapping.chain.length - 1 ? 'var(--red)' : 'var(--amber)',
+                      border: `1px solid ${ti === 0 ? 'rgba(99,102,241,0.2)' : ti === session.report.mitreAttackMapping.chain.length - 1 ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)'}`,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {tactic.name}
+                      <span style={{ opacity: 0.6, marginLeft: 4 }}>({tactic.techniques?.length || 0})</span>
+                    </div>
+                    {ti < session.report.mitreAttackMapping.chain.length - 1 && (
+                      <span style={{ color: 'var(--text3)', margin: '0 2px', fontSize: 12 }}>→</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recommendations */}
+          {report.recommendations && report.recommendations.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>Recommendations:</div>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {report.recommendations.map((r, i) => (
+                  <li key={i} style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3, lineHeight: 1.5 }}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <button onClick={downloadReport} style={{
             border: '1px solid var(--border2)', borderRadius: 8, padding: '8px 14px',
             background: 'transparent', color: 'var(--text2)', cursor: 'pointer',
             display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontFamily: 'inherit',
           }}>
-            <Download size={13} /> Download Full Report
+            <Download size={13} /> Download Full Report (PDF)
           </button>
-        </div>
+        </motion.div>
       )}
 
       {/* ── Scan History ── */}
       {history.length > 0 && (
-        <div className="dark-card">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="dark-card"
+        >
           <div className="card-title"><Clock size={13} /> Scan History ({history.length})</div>
           {history.map((h) => (
             <div key={h._id} style={{
@@ -426,7 +625,7 @@ const AIAgent = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <button
                   onClick={() => {
-                    getAIScanStatus(h._id).then(s => { setSession(s); setDecisions(s?.aiDecisions || []); setScanId(h._id); setExplainMode(null); setExplainText(''); }).catch(() => {});
+                    getAIScanStatus(h._id).then(s => { setSession(s); setDecisions(s?.aiDecisions || []); setScanId(h._id); setExplainMode(null); setExplainData(null); setExplainText(''); }).catch(() => {});
                   }}
                   style={{
                     border: '1px solid var(--border2)', borderRadius: 6, padding: '4px 10px',
@@ -447,7 +646,7 @@ const AIAgent = () => {
               </div>
             </div>
           ))}
-        </div>
+        </motion.div>
       )}
     </Layout>
   );

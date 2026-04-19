@@ -8,6 +8,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Shield, ChevronDown, User, LogOut, Settings } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import useAuth from '../hooks/useAuth';
 import NotificationBell from './NotificationBell';
@@ -66,43 +67,52 @@ const Navbar = () => {
             <ChevronDown size={12} color="var(--text3)" />
           </button>
 
-          {open && (
-            <div className="dropdown">
-              <div className="dd-head">
-                <div className="dd-head-name">{user?.name}</div>
-                <div className="dd-head-email">{user?.email}</div>
-              </div>
-
-              <button
-                className="dd-item"
-                onClick={() => {
-                  setOpen(false);
-                  navigate('/profile');
-                }}
+          <AnimatePresence>
+            {open && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                transition={{ duration: 0.15, ease: "easeOut" }}
+                className="dropdown"
+                style={{ transformOrigin: 'top right' }}
               >
-                <User size={13} />
-                My profile
-              </button>
+                <div className="dd-head">
+                  <div className="dd-head-name">{user?.name}</div>
+                  <div className="dd-head-email">{user?.email}</div>
+                </div>
 
-              <button
-                className="dd-item"
-                onClick={() => {
-                  setOpen(false);
-                  navigate('/profile');
-                }}
-              >
-                <Settings size={13} />
-                Security Center
-              </button>
+                <motion.button whileHover={{ x: 4, backgroundColor: 'rgba(255,255,255,0.05)' }}
+                  className="dd-item"
+                  onClick={() => {
+                    setOpen(false);
+                    navigate('/profile');
+                  }}
+                >
+                  <User size={13} />
+                  My profile
+                </motion.button>
 
-              <div className="dd-sep" />
+                <motion.button whileHover={{ x: 4, backgroundColor: 'rgba(255,255,255,0.05)' }}
+                  className="dd-item"
+                  onClick={() => {
+                    setOpen(false);
+                    navigate('/profile');
+                  }}
+                >
+                  <Settings size={13} />
+                  Security Center
+                </motion.button>
 
-              <button className="dd-item danger" onClick={handleLogout}>
-                <LogOut size={13} />
-                Sign out
-              </button>
-            </div>
-          )}
+                <div className="dd-sep" />
+
+                <motion.button whileHover={{ x: 4, backgroundColor: 'rgba(239,68,68,0.1)' }} className="dd-item danger" onClick={handleLogout}>
+                  <LogOut size={13} />
+                  Sign out
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </header>

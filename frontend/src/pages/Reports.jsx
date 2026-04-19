@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import {
   FileText, Download, Trash2, Shield, AlertTriangle, ChevronDown, ChevronUp,
-  Briefcase, Wrench, GitBranch, Eye, BarChart3, ArrowRight,
+  Briefcase, Wrench, GitBranch, Eye, BarChart3, ArrowRight, Crosshair,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/layout';
+import * as aiApi from '../api/aiAgent.api';
 import { listReports, getReport, deleteReport } from '../api/aiAgent.api';
 
 const sevColor = s => ({ critical: '#ff3b5c', high: '#ff6b35', medium: '#ffb800', low: '#818cf8', info: '#64748b' }[s] || '#64748b');
@@ -41,15 +42,14 @@ const Reports = () => {
     } catch { toast.error('Failed'); }
   };
 
-  const downloadJson = () => {
+  const downloadPdf = async () => {
     if (!selected) return;
-    const blob = new Blob([JSON.stringify(selected, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `paia-report-${selected.target}-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      toast.success('Preparing PDF Document...', { icon: '📄' });
+      await aiApi.downloadReportPdf(selected._id);
+    } catch {
+      toast.error('Failed to download PDF');
+    }
   };
 
   const findings = selected?.findings || [];
@@ -122,12 +122,12 @@ const Reports = () => {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={downloadJson} style={{
+                    <button onClick={downloadPdf} style={{
                       border: '1px solid var(--border2)', borderRadius: 8, padding: '7px 12px',
                       background: 'transparent', color: 'var(--text2)', cursor: 'pointer',
                       display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontFamily: 'inherit',
                     }}>
-                      <Download size={12} /> JSON
+                      <Download size={12} /> Download PDF
                     </button>
                     <button onClick={() => handleDelete(selected._id)} style={{
                       border: '1px solid var(--border2)', borderRadius: 8, padding: '7px 12px',
@@ -168,6 +168,9 @@ const Reports = () => {
                   </button>
                   <button className={`report-tab ${activeTab === 'technical' ? 'active' : ''}`} onClick={() => setActiveTab('technical')}>
                     <Eye size={12} style={{ marginRight: 6, verticalAlign: 'middle' }} /> Technical Deep Dive
+                  </button>
+                  <button className={`report-tab ${activeTab === 'mitre' ? 'active' : ''}`} onClick={() => setActiveTab('mitre')}>
+                    <Crosshair size={12} style={{ marginRight: 6, verticalAlign: 'middle' }} /> MITRE ATT&CK
                   </button>
                   <button className={`report-tab ${activeTab === 'fixes' ? 'active' : ''}`} onClick={() => setActiveTab('fixes')}>
                     <Wrench size={12} style={{ marginRight: 6, verticalAlign: 'middle' }} /> Recommendations
@@ -253,7 +256,24 @@ const Reports = () => {
                               {f.evidence && <div style={{ marginBottom: 6 }}><strong style={{ color: 'var(--text3)' }}>EVIDENCE:</strong><br />{f.evidence}</div>}
                               {f.remediation && <div style={{ marginBottom: 6, color: 'var(--green)' }}><strong style={{ color: 'var(--text3)' }}>REMEDIATION:</strong><br />{f.remediation}</div>}
                               {f.cveId && <div style={{ marginBottom: 4 }}><strong style={{ color: 'var(--text3)' }}>CVE:</strong> {f.cveId}</div>}
-                              {f.tool && <div><strong style={{ color: 'var(--text3)' }}>TOOL:</strong> {f.tool}</div>}
+                              {f.tool && <div style={{ marginBottom: 4 }}><strong style={{ color: 'var(--text3)' }}>TOOL:</strong> {f.tool}</div>}
+                              {f.exploitAvailable && (
+                                <div style={{ marginTop: 4, padding: '4px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)', fontSize: 10, color: '#ef4444', fontWeight: 700 }}>
+                                  ⚠ PUBLIC EXPLOIT AVAILABLE
+                                </div>
+                              )}
+                              {f.mitreMapping && f.mitreMapping.length > 0 && (
+                                <div style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.1)' }}>
+                                  <strong style={{ color: 'var(--indigo-l)', fontSize: 10 }}>MITRE ATT&CK:</strong>
+                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                                    {f.mitreMapping.map((m, mi) => (
+                                      <span key={mi} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(99,102,241,0.1)', color: 'var(--indigo-l)', fontWeight: 600, fontFamily: "'JetBrains Mono'" }}>
+                                        {m.tacticName} / {m.techniqueId}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -283,6 +303,79 @@ const Reports = () => {
                           </div>
                         ))}
                       </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB: MITRE ATT&CK */}
+              {activeTab === 'mitre' && (
+                <div className="dark-card" style={{ marginBottom: 14 }}>
+                  <div className="card-title"><Crosshair size={13} /> MITRE ATT&CK Kill Chain</div>
+
+                  {selected.mitreAttackMapping?.chain?.length > 0 ? (
+                    <>
+                      <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 12 }}>
+                        Coverage: {selected.mitreAttackMapping.coveragePercent || 0}% of MITRE ATT&CK tactics
+                      </div>
+                      {/* Kill chain visualization */}
+                      <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', alignItems: 'center', marginBottom: 18 }}>
+                        {selected.mitreAttackMapping.chain.map((tactic, ti) => (
+                          <div key={ti} style={{ display: 'flex', alignItems: 'center' }}>
+                            <div style={{
+                              padding: '8px 12px', borderRadius: 8, fontSize: 10, fontWeight: 700,
+                              background: ti === 0 ? 'rgba(99,102,241,0.12)' : ti === selected.mitreAttackMapping.chain.length - 1 ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.1)',
+                              color: ti === 0 ? 'var(--indigo-l)' : ti === selected.mitreAttackMapping.chain.length - 1 ? 'var(--red)' : 'var(--amber)',
+                              border: `1px solid ${ti === 0 ? 'rgba(99,102,241,0.2)' : ti === selected.mitreAttackMapping.chain.length - 1 ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.2)'}`,
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {tactic.name}
+                              <span style={{ opacity: 0.6, marginLeft: 4, fontSize: 8 }}>[{tactic.id}]</span>
+                            </div>
+                            {ti < selected.mitreAttackMapping.chain.length - 1 && (
+                              <ArrowRight size={14} color="var(--text3)" style={{ margin: '0 3px', flexShrink: 0 }} />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Tactic detail cards */}
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {selected.mitreAttackMapping.chain.map((tactic, ti) => (
+                          <div key={ti} style={{
+                            padding: '12px 14px', borderRadius: 10,
+                            background: 'rgba(99,102,241,0.03)',
+                            border: '1px solid rgba(99,102,241,0.08)',
+                            borderLeft: '3px solid var(--indigo-l)',
+                          }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--indigo-l)', marginBottom: 6 }}>
+                              {tactic.name} <span style={{ fontWeight: 500, color: 'var(--text3)' }}>[{tactic.id}]</span>
+                            </div>
+                            {tactic.techniques?.map((tech, tei) => (
+                              <div key={tei} style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 3, paddingLeft: 12 }}>
+                                → {tech.name} <span style={{ color: 'var(--text3)', fontFamily: "'JetBrains Mono'" }}>({tech.id})</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--text3)', textAlign: 'center', padding: 20 }}>No MITRE ATT&CK data available for this report.</div>
+                  )}
+
+                  {selected.mitreAttackSummary && (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', marginBottom: 8 }}>Attack Narrative</div>
+                      <pre style={{
+                        fontSize: 10, color: 'var(--text2)', lineHeight: 1.7,
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                        padding: '12px 14px', borderRadius: 8,
+                        background: 'rgba(239,68,68,0.03)', border: '1px solid rgba(239,68,68,0.08)',
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}>
+                        {selected.mitreAttackSummary}
+                      </pre>
                     </div>
                   )}
                 </div>

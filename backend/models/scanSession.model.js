@@ -2,6 +2,7 @@
  * ╔══════════════════════════════════════════════╗
  * ║   PAIA — Scan Session Model                  ║
  * ║   Full AI-driven scan lifecycle record       ║
+ * ║   + Progress tracking fields                 ║
  * ╚══════════════════════════════════════════════╝
  */
 
@@ -55,6 +56,15 @@ const vulnerabilitySchema = new mongoose.Schema(
     remediation: { type: String, default: '' },
     cveId: { type: String, default: '' },
     tool: { type: String, default: '' },
+    // MITRE ATT&CK mapping
+    mitreMapping: { type: [{ tacticId: String, tacticName: String, techniqueId: String, techniqueName: String, phase: String }], default: [] },
+    // NVD enrichment data
+    nvdData: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Exploit availability (from Vulners)
+    exploitAvailable: { type: Boolean, default: false },
+    exploitData: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Related CVEs from NVD keyword search
+    relatedCVEs: { type: [{ cveId: String, cvssScore: Number, severity: String, description: String }], default: [] },
   },
   { _id: true }
 );
@@ -84,9 +94,18 @@ const scanSessionSchema = new mongoose.Schema(
       riskScore: { type: Number, min: 0, max: 100, default: 0 },
       recommendations: { type: [String], default: [] },
       generatedAt: { type: Date, default: null },
+      mitreAttackSummary: { type: String, default: '' },
+      mitreAttackMapping: { type: mongoose.Schema.Types.Mixed, default: null },
+      riskBreakdown: { type: mongoose.Schema.Types.Mixed, default: null },
     },
     currentIteration: { type: Number, default: 0 },
     maxIterations: { type: Number, default: 10 },
+
+    // ── Progress tracking (NEW) ──────────────────
+    currentPhase: { type: String, default: 'initializing' },
+    progress: { type: Number, default: 0, min: 0, max: 100 },
+    currentMessage: { type: String, default: 'Initializing...' },
+
     startedAt: { type: Date, default: null },
     finishedAt: { type: Date, default: null },
   },

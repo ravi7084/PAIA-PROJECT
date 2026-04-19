@@ -29,6 +29,8 @@ const reportSchema = new mongoose.Schema(
         remediation: String,
         cveId: String,
         tool: String,
+        mitreMapping: { type: [{ tacticId: String, tacticName: String, techniqueId: String, techniqueName: String }], default: [] },
+        exploitAvailable: { type: Boolean, default: false },
       },
     ],
 
@@ -43,6 +45,9 @@ const reportSchema = new mongoose.Schema(
 
     recommendations: { type: [String], default: [] },
     conclusion: { type: String, default: '' },
+    mitreAttackSummary: { type: String, default: '' },
+    mitreAttackMapping: { type: mongoose.Schema.Types.Mixed, default: null },
+    riskBreakdown: { type: mongoose.Schema.Types.Mixed, default: null },
     generatedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

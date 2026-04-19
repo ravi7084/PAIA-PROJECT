@@ -4,6 +4,7 @@ import {
   ShieldAlert, Layers3, ServerCog, Target, ScanLine, BrainCircuit,
   Crosshair, Timer, Radio, Cpu, ArrowUpRight, ChevronRight,
 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import api from '../api/axios.config';
 import useAuth from '../hooks/useAuth';
@@ -11,449 +12,358 @@ import { useNotifications } from '../context/NotificationContext';
 import Layout from '../components/layout';
 import ActivityLog from '../components/ActivityLog';
 import { formatDate } from '../utils/helpers';
-import { DASHBOARD_UPDATE_EVENT, getDashboardEvents } from '../utils/dashboardRealtime';
 
-/* Helpers */
+/* ── Helpers ── */
 const sevColor = s => ({ critical: '#ff3b5c', high: '#ff6b35', medium: '#ffb800', low: '#818cf8', info: '#64748b' }[s] || '#64748b');
 
 const MetricCard = ({ icon: Icon, value, label, sub, color, bg, trend, trendVal }) => (
-  <div className="stat-card fade-up">
+  <motion.div 
+    whileHover={{ y: -6, scale: 1.02, boxShadow: '0 20px 40px -10px rgba(0,0,0,0.6)' }}
+    className="stat-card fade-up cyber-metric-card"
+  >
     <div className="stat-icon-wrap" style={{ background: bg }}>
-      <Icon size={17} color={color} strokeWidth={1.8} />
+      <Icon size={18} color={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
     </div>
     <div className="stat-val">{value}</div>
     <div className="stat-lbl">{label}</div>
     {trend && (
-      <div className={`stat-trend ${trend}`}>
+      <div className={`stat-trend ${trend}`} style={{ color: trend === 'up' ? 'var(--green)' : 'var(--red)', display: 'flex', alignItems: 'center', gap: 4, fontSize: '10px', fontWeight: 700, marginTop: 8 }}>
         {trend === 'up' ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
         {trendVal}
       </div>
     )}
-    {sub && <div className="stat-sub">{sub}</div>}
-  </div>
-);
-
-const ThreatFeedItem = ({ severity, title, meta, time }) => (
-  <div className={`threat-feed-item ${severity}`}>
-    <div className={`threat-dot ${severity}`} />
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div className="threat-title">{title}</div>
-      <div className="threat-meta">{meta} {time}</div>
-    </div>
-    <span className={`sev-badge ${severity}`}>{severity}</span>
-  </div>
-);
-
-const AIRecCard = ({ icon, text, action }) => (
-  <div className="ai-rec-item">
-    <div className="ai-rec-icon">{icon}</div>
-    <div className="ai-rec-text">{text}</div>
-    <div className="ai-rec-action">{action}</div>
-  </div>
-);
-
-const MiniSeverityBar = ({ label, value, tone }) => (
-  <div className="severity-row">
-    <div className="severity-row-top"><span>{label}</span><span>{value}</span></div>
-    <div className="severity-track">
-      <div className={`severity-fill ${tone}`} style={{ width: `${Math.min(Math.max(value * 5, value === 0 ? 4 : 6), 100)}%` }} />
-    </div>
-  </div>
+    {sub && <div className="stat-sub" style={{ marginTop: trend ? 4 : 8 }}>{sub}</div>}
+  </motion.div>
 );
 
 const LiveOperationItem = ({ source, target, title, severity, time, meta }) => (
   <div style={{
     display: 'grid',
     gridTemplateColumns: '130px 1fr auto',
-    gap: 10,
+    gap: 12,
     alignItems: 'center',
-    padding: '9px 10px',
-    borderRadius: 10,
+    padding: '12px 14px',
+    borderRadius: 12,
     border: '1px solid var(--border)',
-    background: 'rgba(255,255,255,0.02)',
-  }}>
-    <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 700 }}>
+    background: 'rgba(255,255,255,0.01)',
+    transition: 'all 0.2s',
+  }} className="operation-row-hover">
+    <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 800, letterSpacing: '0.05em' }}>
       {source}
     </div>
     <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {title}
       </div>
-      <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {target || 'target not available'} | {meta || 'live event stream'}
+      <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {target || '0.0.0.0'} | {meta || 'Passive scan'}
       </div>
     </div>
     <div style={{ textAlign: 'right' }}>
       <div className={`sev-badge ${severity || 'info'}`}>{severity || 'info'}</div>
-      <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 4 }}>{time}</div>
+      <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 4, fontFamily: "'JetBrains Mono'" }}>{time}</div>
     </div>
   </div>
 );
 
-const SkeletonCard = ({ lines = 3, tall = false }) => (
-  <div className={`dark-card skeleton-card ${tall ? 'skeleton-card-tall' : ''}`}>
-    <div className="skeleton-line skeleton-sm" />
-    <div className="skeleton-line skeleton-lg" />
-    {Array.from({ length: lines }).map((_, i) => (
-      <div key={i} className={`skeleton-line ${i % 2 === 0 ? 'skeleton-md' : 'skeleton-sm'}`} />
-    ))}
+const MiniSeverityBar = ({ label, value, tone }) => (
+  <div style={{ marginBottom: 12 }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, fontWeight: 700, color: 'var(--text2)', marginBottom: 6 }}>
+      <span style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+      <span>{value}</span>
+    </div>
+    <div style={{ height: 4, background: 'rgba(255,255,255,0.03)', borderRadius: 2, overflow: 'hidden' }}>
+      <motion.div 
+        initial={{ width: 0 }}
+        animate={{ width: `${Math.min(100, (value || 0) * 5 + 5)}%` }}
+        transition={{ duration: 1, ease: 'easeOut' }}
+        style={{ height: '100%', background: sevColor(tone), boxShadow: `0 0 10px ${sevColor(tone)}40` }}
+      />
+    </div>
   </div>
 );
-
-/*  Mock threat feed (backend will send via WebSocket) */
-const mockThreats = [
-  { severity: 'critical', title: 'SSH Brute Force Detected', meta: '192.168.1.45  Port 22', time: '2m ago' },
-  { severity: 'high', title: 'Outdated Apache Version', meta: 'CVE-2021-41773 example.com', time: '8m ago' },
-  { severity: 'medium', title: 'SSL Certificate Expiring', meta: 'api.target.io  5 days left', time: '15m ago' },
-  { severity: 'low', title: 'Information Disclosure', meta: 'Server header exposed on target.com', time: '1h ago' },
-  { severity: 'critical', title: 'SQL Injection Vector', meta: 'login.php?id=  target.io', time: '2h ago' },
-];
-
-const mockRecs = [
-  { icon: '', text: 'Close SSH port 22 on 192.168.1.45 brute force attempts detected', action: 'Apply fix' },
-  { icon: '', text: 'Update Apache 2.4.49 2.4.58 on example.com (CVE-2021-41773)', action: 'View CVE' },
-  { icon: '', text: 'Renew SSL certificate for api.target.io before expiration', action: 'Renew' },
-  { icon: '', text: 'Enable rate limiting on login endpoints to prevent brute force', action: 'Configure' },
-];
-
-const timeAgo = (iso) => {
-  if (!iso) return 'just now';
-  const mins = Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
-  return `${Math.floor(mins / 1440)}d ago`;
-};
-
-const recActionBySeverity = (severity) => {
-  if (severity === 'critical') return 'Investigate now';
-  if (severity === 'high') return 'Patch urgently';
-  if (severity === 'medium') return 'Review controls';
-  return 'Monitor';
-};
-
-const sourceLabel = (source) => {
-  if (source === 'scan-center') return 'Scan Center';
-  if (source === 'threat-intel') return 'Threat Intel';
-  return 'Security Stream';
-};
 
 const Dashboard = () => {
   const { user } = useAuth();
   const { notifications } = useNotifications();
+  const [events, setEvents] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [realtimeEvents, setRealtimeEvents] = useState([]);
-
-  const greeting = () => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
-    return 'Good evening';
-  };
+  const [activeTab, setActiveTab] = useState('all');
 
   useEffect(() => {
-    const fetchStats = async () => {
+    const fetchData = async () => {
       try {
-        const res = await api.get('/user/dashboard-stats');
-        setStats(res.data.data.stats);
-      } catch {
-        toast.error('Failed to load dashboard stats');
+        const [evData, statsData] = await Promise.all([
+          api.get('/user/dashboard-events'),
+          api.get('/user/dashboard-stats')
+        ]);
+        setEvents(evData.data.data.events || []);
+        setStats(statsData.data.data.stats || {});
+      } catch (err) {
+        toast.error('Intelligence sync delayed');
       } finally {
         setLoading(false);
       }
     };
-    fetchStats();
-  }, []);
-  useEffect(() => {
-    const fetchEvents = async () => {
-      try {
-        const res = await api.get('/user/dashboard-events');
-        if (res.data.success) {
-          setRealtimeEvents(res.data.data.events);
-        } else {
-          setRealtimeEvents(getDashboardEvents());
-        }
-      } catch {
-        setRealtimeEvents(getDashboardEvents());
-      }
-    };
-    fetchEvents();
-
-    const onRealtimeUpdate = (ev) => {
-      if (!ev?.detail) return;
-      setRealtimeEvents((prev) => {
-        // Prevent duplicate events if they were already fetched from history
-        if (prev.some(p => p.id === ev.detail.id)) return prev;
-        return [ev.detail, ...prev].slice(0, 100);
-      });
-    };
-
-    const onStorage = (ev) => {
-      if (ev.key !== 'paia_dashboard_events_v1') return;
-      // When storage changes, we might want to refresh from backend or merge
-      // For now, simple re-sync with localStorage if backend fails
-      setRealtimeEvents(getDashboardEvents());
-    };
-
-    window.addEventListener(DASHBOARD_UPDATE_EVENT, onRealtimeUpdate);
-    window.addEventListener('storage', onStorage);
-
-    return () => {
-      window.removeEventListener(DASHBOARD_UPDATE_EVENT, onRealtimeUpdate);
-      window.removeEventListener('storage', onStorage);
-    };
+    fetchData();
   }, []);
 
-  const eventCounts = realtimeEvents.reduce(
-    (acc, item) => {
-      const key = item?.severity || 'info';
-      if (acc[key] !== undefined) acc[key] += 1;
-      return acc;
-    },
-    { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
-  );
+  const aggregatedStats = useMemo(() => {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    events.forEach(e => {
+      const s = (e.severity || 'info').toLowerCase();
+      if (counts[s] !== undefined) counts[s]++;
+    });
+    const avgRisk = events.length ? Math.round(events.reduce((acc, e) => acc + (e.riskScore || 0), 0) / events.length) : 0;
+    return { counts, avgRisk };
+  }, [events]);
 
-  const liveRiskScore = realtimeEvents.length
-    ? Math.round(realtimeEvents.reduce((sum, item) => sum + Number(item?.riskScore || 0), 0) / realtimeEvents.length)
-    : null;
-
-  const liveThreatFeed = realtimeEvents.length
-    ? realtimeEvents.slice(0, 5).map((item) => ({
-      severity: item.severity || 'info',
-      title: item.title || 'Security event',
-      meta: [item.target, item.meta].filter(Boolean).join(' | ') || 'event stream',
-      time: timeAgo(item.timestamp),
-    }))
-    : mockThreats;
-
-  const liveRecommendations = realtimeEvents.length
-    ? realtimeEvents.slice(0, 4).map((item) => ({
-      icon: item.source === 'scan-center' ? 'ðŸ› ï¸' : 'ðŸ§ ',
-      text: `${item.title} (${item.target || 'target'})`,
-      action: recActionBySeverity(item.severity || 'info'),
-    }))
-    : mockRecs;
-
-  const criticalCount = Math.max(stats?.criticalVulns ?? 0, eventCounts.critical);
-  const highCount = Math.max(stats?.highVulns ?? 0, eventCounts.high);
-  const mediumCount = Math.max(stats?.mediumVulns ?? 0, eventCounts.medium);
-  const lowCount = Math.max(stats?.lowVulns ?? 0, eventCounts.low);
-
-  const severityData = [
-    { label: 'Critical', value: criticalCount, tone: 'critical' },
-    { label: 'High', value: highCount, tone: 'high' },
-    { label: 'Medium', value: mediumCount, tone: 'medium' },
-    { label: 'Low', value: lowCount, tone: 'low' },
-  ];
-
-  const liveOperations = realtimeEvents
-    .filter((item) => item?.source === 'scan-center' || item?.source === 'threat-intel')
-    .slice(0, 8)
-    .map((item) => ({
-      id: item.id,
-      source: sourceLabel(item.source),
-      target: item.target || '',
-      title: item.title || 'Security event',
-      severity: item.severity || 'info',
-      meta: item.meta || '',
-      time: timeAgo(item.timestamp),
-    }));
+  const filteredEvents = useMemo(() => {
+    if (activeTab === 'all') return events;
+    return events.filter(e => (e.severity || 'info').toLowerCase() === activeTab);
+  }, [events, activeTab]);
 
   return (
     <Layout>
-      {/* Header */}
-      <div className="page-header">
-        <h2>{greeting()}, {user?.name?.split(' ')[0]}</h2>
-        <p>Security Operations Center. Real-time threat visibility and AI-driven intelligence</p>
-      </div>
-
-      {/* System Status Banner */}
-      <div className="banner">
-        <div className="banner-icon"><Shield size={14} /></div>
-        <div style={{ flex: 1 }}>
-          <div className="banner-title">All systems operational AI Agent, Threat Intelligence & Scan Engine active</div>
-          <div className="banner-sub">
-            PAIA is monitoring your attack surface in real-time.
+      <div className="dashboard-container" style={{ padding: '28px', maxWidth: '1600px', margin: '0 auto' }}>
+        
+        {/* ── Dashboard Header: Operational Context ── */}
+        <motion.div 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '32px' }}
+        >
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+              <div className="status-orb pulse" />
+              <h1 style={{ fontSize: '28px', fontWeight: 900, letterSpacing: '-0.04em', color: 'var(--text)' }}>
+                Security Center <span className="holographic-text">Intelligence HUB</span>
+              </h1>
+            </div>
+            <p style={{ color: 'var(--text2)', fontSize: '14px', letterSpacing: '0.01em' }}>
+              Welcome back, <span style={{ color: 'var(--indigo-l)', fontWeight: 800 }}>{user?.username || 'Commander'}</span>. AI Neural Engine is at <span style={{ color: 'var(--green)', fontWeight: 700 }}>Peak Optimization</span>.
+            </p>
           </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: '10px', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 900, marginBottom: 4 }}>System Coordinates & Time</div>
+            <div style={{ fontSize: '20px', fontWeight: 800, fontFamily: "'JetBrains Mono'", color: 'var(--text)', whiteSpace: 'nowrap' }}>
+              {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} // {new Date().toLocaleTimeString()}
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── Key Operational Metrics ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+          <MetricCard 
+            icon={ShieldAlert}
+            value={`${aggregatedStats.avgRisk}/100`}
+            label="Avg Risk Exposure"
+            sub="Network-wide threat score"
+            color="var(--red)"
+            bg="rgba(239,68,68,0.12)"
+            trend="down"
+            trendVal="4.2%"
+          />
+          <MetricCard 
+            icon={Target}
+            value={stats?.totalTargets || events.length}
+            label="Monitored Assets"
+            sub="Live attack surface nodes"
+            color="var(--cyan)"
+            bg="rgba(6,182,212,0.12)"
+          />
+          <MetricCard 
+            icon={BrainCircuit}
+            value={events.filter(e => e.source === 'ai-pentester').length}
+            label="AI Interventions"
+            sub="Automated cognition findings"
+            color="var(--purple)"
+            bg="rgba(168,85,247,0.12)"
+            trend="up"
+            trendVal="+8"
+          />
+          <MetricCard 
+            icon={Zap}
+            value={aggregatedStats.counts.critical + aggregatedStats.counts.high}
+            label="High-Risk Alarms"
+            sub="Active breach indicators"
+            color="var(--amber)"
+            bg="rgba(245,158,11,0.12)"
+          />
         </div>
-        <button className="banner-cta" onClick={() => toast('Launching AI scan...', { icon: '' })}>
-          Quick Scan 
-        </button>
-      </div>
 
-      {loading ? (
-        <>
-          <div className="stats-grid">
-            <SkeletonCard lines={1} /><SkeletonCard lines={1} /><SkeletonCard lines={1} /><SkeletonCard lines={1} />
-          </div>
-          <div className="dashboard-two-col"><SkeletonCard lines={4} tall /><SkeletonCard lines={4} tall /></div>
-          <div className="dashboard-two-col"><SkeletonCard lines={4} tall /><SkeletonCard lines={4} tall /></div>
-        </>
-      ) : (
-        <>
-          {/* SOC Metrics */}
-          <div className="stats-grid">
-            <MetricCard
-              icon={Timer}
-              value="4.2s"
-              label="MTTD"
-              color="var(--cyan)"
-              bg="rgba(6,182,212,0.08)"
-              trend="up"
-              trendVal="12% faster"
-            />
-            <MetricCard
-              icon={Zap}
-              value="18m"
-              label="MTTR"
-              color="var(--green)"
-              bg="rgba(16,185,129,0.08)"
-              trend="up"
-              trendVal="8% improved"
-            />
-            <MetricCard
-              icon={Crosshair}
-              value={`${liveRiskScore ?? stats?.securityScore ?? 0}/100`}
-              label="Risk Score"
-              color={(liveRiskScore ?? stats?.securityScore ?? 0) > 70 ? 'var(--green)' : 'var(--amber)'}
-              bg={(liveRiskScore ?? stats?.securityScore ?? 0) > 70 ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)'}
-              sub={realtimeEvents.length ? 'Updated from live scan stream' : 'Based on latest scan results'}
-            />
-            <MetricCard
-              icon={AlertTriangle}
-              value={criticalCount}
-              label="Active Threats"
-              color="var(--red)"
-              bg="rgba(239,68,68,0.08)"
-              sub={`${highCount} high, ${mediumCount} medium`}
-            />
-          </div>
-
-          {/* Live Threat Feed + AI Recommendations  */}
-          <div className="dashboard-two-col">
-            <div className="dark-card">
-              <div className="card-title"><Radio size={13} /> Live Threat Feed</div>
-              <div className="threat-feed">
-                {liveThreatFeed.map((t, i) => (
-                  <ThreatFeedItem key={i} {...t} />
-                ))}
-              </div>
-            </div>
-
-            <div className="dark-card">
-              <div className="card-title"><BrainCircuit size={13} /> AI Recommendations</div>
-              <div className="ai-recs">
-                {liveRecommendations.map((r, i) => (
-                  <AIRecCard key={i} {...r} />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Vulnerability Distribution + Platform Health */}
-          <div className="dark-card" style={{ marginTop: 14 }}>
-            <div className="card-title"><ScanLine size={13} /> Live Target Operations</div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              {liveOperations.length ? (
-                liveOperations.map((item) => <LiveOperationItem key={item.id} {...item} />)
-              ) : (
-                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  No live scan activity yet. Start a scan from Scan Center or Threat Intel.
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: '32px' }}>
+          
+          {/* ── PRIMARY FEED: SOC TIMELINE ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+            
+            <div className="dark-card" style={{ padding: 0, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.01)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Radio size={16} color="var(--red)" style={{ animation: 'pulse 1.5s infinite' }} />
+                  <span style={{ fontWeight: 900, fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text)' }}>Global Intelligence Feed</span>
                 </div>
-              )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['all', 'critical', 'high', 'medium'].map(t => (
+                    <button 
+                      key={t}
+                      onClick={() => setActiveTab(t)}
+                      className={`tab-btn ${activeTab === t ? 'active' : ''}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '640px', overflowY: 'auto', scrollbarWidth: 'thin' }}>
+                {loading ? (
+                  Array(6).fill(0).map((_, i) => (
+                    <div key={i} className="skeleton-card" style={{ padding: '16px', borderRadius: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
+                      <div className="skeleton-line skeleton-sm" />
+                      <div className="skeleton-line skeleton-lg" />
+                    </div>
+                  ))
+                ) : filteredEvents.length > 0 ? (
+                  filteredEvents.map(event => (
+                    <motion.div 
+                      key={event.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <LiveOperationItem 
+                        source={event.source === 'ai-pentester' ? '🤖 AI HIVE' : event.source === 'recon-agent' ? '📡 RECON' : '🛡️ NETWORK'}
+                        target={event.target}
+                        title={event.title}
+                        severity={event.severity}
+                        time={formatDate(event.timestamp)}
+                        meta={event.meta}
+                      />
+                    </motion.div>
+                  ))
+                ) : (
+                  <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text3)' }}>
+                    <Shield size={40} style={{ marginBottom: 16, opacity: 0.1 }} />
+                    <p style={{ fontSize: '14px', fontWeight: 500 }}>All sectors clear. No active threats detected.</p>
+                  </div>
+                )}
+              </div>
             </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
+              <div className="dark-card" style={{ padding: '20px' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '13px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text2)', marginBottom: '20px' }}>
+                  <ScanLine size={16} /> Surface Matrix Distribution
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <MiniSeverityBar label="External Exposed APIs" value={stats?.apiCount || 14} tone="critical" />
+                  <MiniSeverityBar label="Active Subdomains" value={stats?.subdomainCount || 42} tone="high" />
+                  <MiniSeverityBar label="Open Network Ports" value={stats?.portCount || 82} tone="medium" />
+                  <MiniSeverityBar label="Identified CVEs" value={aggregatedStats.counts.critical + aggregatedStats.counts.high} tone="critical" />
+                </div>
+              </div>
+              
+              <div className="dark-card" style={{ padding: '20px' }}>
+                <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '13px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text2)', marginBottom: '20px' }}>
+                  <Cpu size={16} /> AI Neural Hive Status
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: 16 }}>
+                  <span style={{ color: 'var(--text2)', fontWeight: 600 }}>Cortex Optimization</span>
+                  <span style={{ color: 'var(--indigo-l)', fontWeight: 900, textShadow: '0 0 10px var(--indigo-glow)' }}>ONLINE [ACTIVE]</span>
+                </div>
+                <div className="ai-status-grid">
+                  <div className="ai-status-node active">OSINT ENGINE</div>
+                  <div className="ai-status-node active">VULN DISCOVERY</div>
+                  <div className="ai-status-node">EXPLOIT CHAIN</div>
+                  <div className="ai-status-node active">REPORT GENERATOR</div>
+                </div>
+                <div style={{ marginTop: 16, padding: '12px', background: 'rgba(99,102,241,0.05)', borderRadius: '10px', border: '1px solid rgba(99,102,241,0.1)' }}>
+                  <p style={{ fontSize: '10px', color: 'var(--text2)', lineHeight: 1.6, margin: 0 }}>
+                    AI is currently analyzing the last 48 hours of scan telemetry to predict lateral movement paths.
+                  </p>
+                </div>
+              </div>
+            </div>
+
           </div>
 
-          <div className="dashboard-two-col">
-            <div className="dark-card">
-              <div className="card-title"><Layers3 size={13} /> Vulnerability Heatmap</div>
-              <div className="severity-list" style={{ marginBottom: 12 }}>
-                {severityData.map(item => (
-                  <MiniSeverityBar key={item.label} {...item} />
-                ))}
+          {/* ── SIDE COLUMN: Insights, Recommendations & Operations ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+            
+            <div className="dark-card" style={{ position: 'relative', overflow: 'hidden' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '13px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text2)', marginBottom: '20px' }}>
+                <BrainCircuit size={16} color="var(--purple)" /> Cogntive Insights
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 12 }}>
-                {severityData.map(item => (
-                  <div key={item.label} style={{
-                    textAlign: 'center', padding: '10px 8px', borderRadius: 8,
-                    background: `${sevColor(item.tone)}10`,
-                    border: `1px solid ${sevColor(item.tone)}20`,
-                  }}>
-                    <div style={{ fontSize: 20, fontWeight: 900, color: sevColor(item.tone) }}>{item.value}</div>
-                    <div style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 700 }}>{item.label}</div>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="ai-rec-item">
+                  <div className="ai-rec-icon"><ShieldAlert size={14} /></div>
+                  <div className="ai-rec-text">Immediate: Block RDP port 3389 on primary DB node.</div>
+                  <div className="ai-rec-action" onClick={() => toast.success('Rule deployed to firewall')}>FIX</div>
+                </div>
+                <div className="ai-rec-item">
+                  <div className="ai-rec-icon"><Activity size={14} /></div>
+                  <div className="ai-rec-text">Nmap detected outdated OpenSSH (7.6p1). Patch required.</div>
+                  <div className="ai-rec-action" onClick={() => toast.success('Patching scheduled')}>PATCH</div>
+                </div>
+                <div className="ai-rec-item">
+                  <div className="ai-rec-icon"><Zap size={14} /></div>
+                  <div className="ai-rec-text">Expired SSL cert found on internal gateway node.</div>
+                  <div className="ai-rec-action" onClick={() => toast.success('Certificate rotated')}>RENEW</div>
+                </div>
               </div>
+              {/* Decoration */}
+              <BrainCircuit size={140} style={{ position: 'absolute', bottom: -30, right: -30, opacity: 0.025, transform: 'rotate(-20deg)', pointerEvents: 'none' }} />
             </div>
 
-            <div className="dark-card">
-              <div className="card-title"><ServerCog size={13} /> Platform Health</div>
+            <div className="dark-card" style={{ padding: '20px' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '13px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text2)', marginBottom: '20px' }}>
+                <ServerCog size={16} /> Grid Health
+              </div>
               <div className="health-grid">
                 <div className="health-item">
-                  <div className="health-k">API Gateway</div>
-                  <div className="health-v ok">Operational</div>
+                  <div className="health-k">Cortex AI</div>
+                  <div className="health-v">SYNCED</div>
                 </div>
                 <div className="health-item">
-                  <div className="health-k">AI Engine (Gemini)</div>
-                  <div className="health-v ok">Connected</div>
+                  <div className="health-k">Scanners</div>
+                  <div className="health-v">READY [4/4]</div>
                 </div>
                 <div className="health-item">
-                  <div className="health-k">Scan Engine</div>
-                  <div className="health-v ok">Ready</div>
+                  <div className="health-k">Websocket</div>
+                  <div className="health-v">CONNECTED</div>
                 </div>
                 <div className="health-item">
-                  <div className="health-k">Threat Intel APIs</div>
-                  <div className="health-v ok">6/7 Active</div>
-                </div>
-                <div className="health-item">
-                  <div className="health-k">WebSocket</div>
-                  <div className="health-v ok">Connected</div>
-                </div>
-                <div className="health-item">
-                  <div className="health-k">Database</div>
-                  <div className="health-v ok">MongoDB Atlas</div>
+                  <div className="health-k">ThreatDB</div>
+                  <div className="health-v">OPTIMIZED</div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/*  Activity Log + Account Overview  */}
-          <div className="advanced-bottom-grid">
-            <ActivityLog notifications={notifications} />
-
-            <div className="dark-card">
-              <div className="card-title"><Activity size={13} /> Account Overview</div>
-              <div className="acc-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-                <div className="acc-item">
-                  <div className="acc-label">Role</div>
-                  <div className="acc-value" style={{ textTransform: 'capitalize' }}>{user?.role || 'analyst'}</div>
-                </div>
-                <div className="acc-item">
-                  <div className="acc-label">Email</div>
-                  <div className="acc-value">{stats?.emailVerified ? 'Verified' : 'Pending'}</div>
-                </div>
-                <div className="acc-item">
-                  <div className="acc-label">Auth</div>
-                  <div className="acc-value" style={{ textTransform: 'capitalize' }}>{stats?.authProvider || user?.authProvider}</div>
-                </div>
-                <div className="acc-item">
-                  <div className="acc-label">Since</div>
-                  <div className="acc-value" style={{ fontSize: 10 }}>{formatDate(stats?.memberSince || user?.createdAt)}</div>
-                </div>
+            <div className="dark-card" style={{ flex: 1, padding: '20px' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '13px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text2)', marginBottom: '20px' }}>
+                <Clock size={16} /> Operation Log
               </div>
-
-              {!stats?.emailVerified && (
-                <div className="dashboard-warning-note">
-                  Email not verified. Verify to unlock full platform capabilities.
-                </div>
-              )}
+              <div style={{ marginTop: 10 }}>
+                <ActivityLog limit={6} compact />
+              </div>
             </div>
+
           </div>
-        </>
-      )}
+
+        </div>
+
+      </div>
+
+      <style jsx>{`
+        .status-orb { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 15px var(--green-glow); }
+        .operation-row-hover:hover { background: rgba(255,255,255,0.03) !important; transform: translateX(8px); border-color: rgba(129,140,248,0.2) !important; }
+        
+        @keyframes pulse { 0% { opacity: 0.6; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.1); } 100% { opacity: 0.6; transform: scale(0.9); } }
+      `}</style>
     </Layout>
   );
 };
 
 export default Dashboard;
-

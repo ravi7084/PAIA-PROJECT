@@ -34,10 +34,10 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Global rate limit — 100 requests per 15 min
+// Global rate limit — 1000 requests per 15 min (AI agent polls every 3s)
 app.use('/api/', rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 1000,
     message: { success: false, message: 'Too many requests. Please try again later.' },
 }));
 

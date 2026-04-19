@@ -5,7 +5,7 @@
  */
 
 const Report = require('../models/report.model');
-const { createReportFromSession } = require('../services/report.service');
+const { createReportFromSession, generatePDF } = require('../services/report.service');
 
 const generateReport = async (req, res, next) => {
   try {
@@ -43,4 +43,14 @@ const deleteReport = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { generateReport, listReports, getReport, deleteReport };
+const downloadReport = async (req, res, next) => {
+  try {
+    const report = await Report.findOne({ _id: req.params.id, user_id: req.user.id });
+    if (!report) return res.status(404).json({ success: false, message: 'Report not found' });
+    
+    // Call the generatePDF service which handles the response stream
+    generatePDF(report, res);
+  } catch (err) { next(err); }
+};
+
+module.exports = { generateReport, listReports, getReport, deleteReport, downloadReport };
