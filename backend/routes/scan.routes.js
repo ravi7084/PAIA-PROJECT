@@ -11,4 +11,7 @@ router.get('/scan/:id', scanController.getScanById);
 // GET /api/orchestration/scans
 router.get('/scans', scanController.getAllScans);
 
+// DELETE /api/orchestration/scan/:id
+router.delete('/scan/:id', scanController.deleteScan);
+
 module.exports = router;

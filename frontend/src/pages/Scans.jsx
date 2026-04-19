@@ -68,6 +68,19 @@ const Scans = () => {
     }
   };
 
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this scan?")) return;
+    
+    try {
+      await api.delete(`/scan/${id}`);
+      // Instant UI update
+      setScans(prev => prev.filter(scan => scan._id !== id));
+    } catch (err) {
+      console.error("Delete failed", err);
+      alert(`Failed to delete scan: ${err.message}`);
+    }
+  };
+
   const filteredScans = scans.filter(s => s.type === activeTab);
 
   return (
@@ -164,7 +177,7 @@ const Scans = () => {
           </div>
         ) : (
           filteredScans.map(scan => (
-            <ScanResultCard key={scan._id} scan={scan} />
+            <ScanResultCard key={scan._id} scan={scan} onDelete={handleDelete} />
           ))
         )}
       </div>
@@ -172,7 +185,7 @@ const Scans = () => {
   );
 };
 
-const ScanResultCard = ({ scan }) => {
+const ScanResultCard = ({ scan, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
   const statusColors = {
     running: 'text-cyan-400 bg-cyan-400/10 border-cyan-500/20',
@@ -201,7 +214,14 @@ const ScanResultCard = ({ scan }) => {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {expanded ? <Trash2 size={18} className="text-gray-600 hover:text-rose-500 transition-colors" /> : null}
+          <Trash2 
+            size={18} 
+            className="text-gray-600 hover:text-rose-500 transition-colors cursor-pointer" 
+            onClick={(e) => {
+              e.stopPropagation(); // Don't expand the card when clicking delete
+              onDelete(scan._id);
+            }} 
+          />
           <div className="text-gray-500 hover:text-white transition-colors">
             {expanded ? <ExternalLink size={20} /> : <div className="p-2 rounded-full hover:bg-gray-800"><List size={20} /></div>}
           </div>

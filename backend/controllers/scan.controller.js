@@ -98,3 +98,18 @@ exports.getAllScans = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+/**
+ * Deletes a scan by ID
+ */
+exports.deleteScan = async (req, res) => {
+  try {
+    const scan = await Scan.findByIdAndDelete(req.params.id);
+    if (!scan) {
+      return res.status(404).json({ success: false, message: 'Scan not found' });
+    }
+    res.status(200).json({ success: true, message: 'Scan deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
