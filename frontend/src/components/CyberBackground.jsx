@@ -1,7 +1,10 @@
 /**
- * PAIA — CyberBackground
- * Canvas-based animated background: matrix rain + network nodes + scanlines
- * Drop this into layout.jsx as the first child
+ * ╔══════════════════════════════════════════════╗
+ * ║   PAIA — CyberBackground (GOD-TIER v4)      ║
+ * ║   Canvas: hex grid + network nodes +         ║
+ * ║   matrix rain + cyan scanline                ║
+ * ║   Pure canvas API, zero dependencies         ║
+ * ╚══════════════════════════════════════════════╝
  */
 
 import { useEffect, useRef } from 'react';
@@ -11,87 +14,110 @@ const CyberBackground = () => {
   const rafRef    = useRef(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
+    var canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    let W = window.innerWidth;
-    let H = window.innerHeight;
+    var ctx = canvas.getContext('2d');
+    var W = window.innerWidth;
+    var H = window.innerHeight;
     canvas.width  = W;
     canvas.height = H;
 
-    // ── MATRIX RAIN ─────────────────────────────────
-    const COL_W   = 18;
-    const COLS    = Math.floor(W / COL_W);
-    const drops   = Array.from({ length: COLS }, () => Math.random() * -80);
-    const chars   = '01アイウエオカキクケコサシスセソタチツテトナニヌネノ∑∏Ω≡≠∞';
+    /* ── MATRIX RAIN ───────────────────────────── */
+    var COL_W  = 18;
+    var COLS   = Math.floor(W / COL_W) + 1;
+    var drops  = [];
+    var speeds = [];
+    var i;
+    for (i = 0; i < COLS; i++) {
+      drops[i]  = Math.random() * -100;
+      speeds[i] = 0.3 + Math.random() * 0.7;
+    }
+    var CHARS = '01アイウエオカキクケコサシスセソタチツテト∑∏Ω≡≠∞';
 
-    // ── NETWORK NODES ───────────────────────────────
-    const NODE_COUNT = 28;
-    const nodes = Array.from({ length: NODE_COUNT }, () => ({
-      x:    Math.random() * W,
-      y:    Math.random() * H,
-      vx:   (Math.random() - 0.5) * 0.28,
-      vy:   (Math.random() - 0.5) * 0.28,
-      r:    Math.random() * 2 + 1,
-      pulse: Math.random() * Math.PI * 2,
-    }));
-    const LINK_DIST = 220;
+    /* ── NETWORK NODES ─────────────────────────── */
+    var NODE_COUNT = 28;
+    var nodes = [];
+    for (i = 0; i < NODE_COUNT; i++) {
+      nodes.push({
+        x:     Math.random() * W,
+        y:     Math.random() * H,
+        vx:    (Math.random() - 0.5) * 0.3,
+        vy:    (Math.random() - 0.5) * 0.3,
+        r:     Math.random() * 1.8 + 0.8,
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    var LINK_DIST = 220;
 
-    // ── HEX GRID ────────────────────────────────────
-    const HEX_SIZE = 44;
-    const hexPoints = (cx, cy, s) => {
-      const pts = [];
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 3) * i - Math.PI / 6;
-        pts.push([cx + s * Math.cos(a), cy + s * Math.sin(a)]);
+    /* ── HEX GRID ──────────────────────────────── */
+    var HEX_R = 44;
+    var hexPath = function(cx, cy, r) {
+      ctx.beginPath();
+      var a, px, py;
+      for (var s = 0; s < 6; s++) {
+        a = (Math.PI / 3) * s - Math.PI / 6;
+        px = cx + r * Math.cos(a);
+        py = cy + r * Math.sin(a);
+        if (s === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
       }
-      return pts;
+      ctx.closePath();
     };
 
-    let frame = 0;
+    /* ── SCANLINE STATE ────────────────────────── */
+    var scanPhase = 0;
+    var SCAN_SPEED = 0.5; // px per frame — full sweep ~8s at 60fps
 
-    const draw = () => {
+    var frame = 0;
+
+    /* ═══════════════════════════════════════════
+       MAIN DRAW LOOP
+       ═══════════════════════════════════════════ */
+    var draw = function() {
       frame++;
 
-      // Fade trail
-      ctx.fillStyle = 'rgba(5, 5, 9, 0.18)';
+      // Fade trail — creates ghosting effect
+      ctx.fillStyle = 'rgba(5, 5, 9, 0.16)';
       ctx.fillRect(0, 0, W, H);
 
-      // ── Draw hex grid (very subtle) ───────────────
+      /* ── Layer A: Hex grid (every 4th frame) ── */
       if (frame % 4 === 0) {
-        const rowH = HEX_SIZE * Math.sqrt(3);
         ctx.strokeStyle = 'rgba(79, 70, 229, 0.04)';
         ctx.lineWidth = 0.5;
-        for (let row = -1; row < H / rowH + 2; row++) {
-          for (let col = -1; col < W / (HEX_SIZE * 1.5) + 2; col++) {
-            const cx = col * HEX_SIZE * 1.5;
-            const cy = row * rowH + (col % 2 === 0 ? 0 : rowH / 2);
-            const pts = hexPoints(cx, cy, HEX_SIZE - 2);
-            ctx.beginPath();
-            ctx.moveTo(pts[0][0], pts[0][1]);
-            for (let i = 1; i < 6; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-            ctx.closePath();
+        var rowH = HEX_R * Math.sqrt(3);
+        var colW = HEX_R * 1.5;
+        var row, col, cx, cy;
+        for (row = -1; row < H / rowH + 2; row++) {
+          for (col = -1; col < W / colW + 2; col++) {
+            cx = col * colW;
+            cy = row * rowH + ((col % 2 === 0) ? 0 : rowH * 0.5);
+            hexPath(cx, cy, HEX_R - 2);
             ctx.stroke();
           }
         }
       }
 
-      // ── Draw network nodes & edges ────────────────
-      for (let i = 0; i < nodes.length; i++) {
-        const n = nodes[i];
-        n.x += n.vx; n.y += n.vy;
-        n.pulse += 0.04;
+      /* ── Layer B: Network nodes + edges ──────── */
+      var n, m, j, dx, dy, dist, alpha, pulseR;
+      for (i = 0; i < nodes.length; i++) {
+        n = nodes[i];
+        n.x += n.vx;
+        n.y += n.vy;
+        n.phase += 0.035;
+
+        // Bounce off edges
         if (n.x < 0 || n.x > W) n.vx *= -1;
         if (n.y < 0 || n.y > H) n.vy *= -1;
 
-        // edges
-        for (let j = i + 1; j < nodes.length; j++) {
-          const m = nodes[j];
-          const dx = n.x - m.x, dy = n.y - m.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
+        // Draw edges to nearby nodes
+        for (j = i + 1; j < nodes.length; j++) {
+          m = nodes[j];
+          dx = n.x - m.x;
+          dy = n.y - m.y;
+          dist = Math.sqrt(dx * dx + dy * dy);
           if (dist < LINK_DIST) {
-            const alpha = (1 - dist / LINK_DIST) * 0.18;
-            ctx.strokeStyle = `rgba(99, 102, 241, ${alpha})`;
+            alpha = (1 - dist / LINK_DIST) * 0.18;
+            ctx.strokeStyle = 'rgba(99, 102, 241, ' + alpha + ')';
             ctx.lineWidth = 0.6;
             ctx.beginPath();
             ctx.moveTo(n.x, n.y);
@@ -100,63 +126,86 @@ const CyberBackground = () => {
           }
         }
 
-        // node dot
-        const pulseR = n.r + Math.sin(n.pulse) * 0.8;
+        // Draw node dot with sin-wave pulse
+        pulseR = n.r + Math.sin(n.phase) * 0.7;
         ctx.beginPath();
         ctx.arc(n.x, n.y, pulseR, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(99, 102, 241, ${0.35 + Math.sin(n.pulse) * 0.15})`;
+        ctx.fillStyle = 'rgba(99, 102, 241, ' + (0.35 + Math.sin(n.phase) * 0.15) + ')';
         ctx.fill();
       }
 
-      // ── Matrix rain ───────────────────────────────
-      ctx.font = `${COL_W - 4}px "JetBrains Mono", monospace`;
-      for (let i = 0; i < drops.length; i++) {
-        const char = chars[Math.floor(Math.random() * chars.length)];
-        const y    = drops[i] * COL_W;
-        const head = y > 0 && y < H;
+      /* ── Layer C: Matrix rain ────────────────── */
+      ctx.font = (COL_W - 4) + 'px "JetBrains Mono", monospace';
+      var ch, yPos;
+      for (i = 0; i < COLS; i++) {
+        yPos = drops[i] * COL_W;
 
-        if (head) {
-          // bright head
+        if (yPos > 0 && yPos < H) {
+          // Bright head character
+          ch = CHARS[Math.floor(Math.random() * CHARS.length)];
           ctx.fillStyle = 'rgba(129, 140, 248, 0.9)';
-          ctx.fillText(char, i * COL_W, y);
-          // trail char one behind
-          if (y > COL_W) {
-            ctx.fillStyle = 'rgba(79, 70, 229, 0.35)';
-            ctx.fillText(chars[Math.floor(Math.random() * chars.length)], i * COL_W, y - COL_W);
+          ctx.fillText(ch, i * COL_W, yPos);
+
+          // Fading trail — 1 char behind
+          if (yPos > COL_W) {
+            ctx.fillStyle = 'rgba(79, 70, 229, 0.30)';
+            ctx.fillText(CHARS[Math.floor(Math.random() * CHARS.length)], i * COL_W, yPos - COL_W);
+          }
+          // Even fainter trail — 2 chars behind
+          if (yPos > COL_W * 2) {
+            ctx.fillStyle = 'rgba(79, 70, 229, 0.12)';
+            ctx.fillText(CHARS[Math.floor(Math.random() * CHARS.length)], i * COL_W, yPos - COL_W * 2);
           }
         }
 
-        drops[i]++;
+        drops[i] += speeds[i];
+
+        // Random reset when past bottom
         if (drops[i] * COL_W > H && Math.random() > 0.975) {
-          drops[i] = -Math.floor(Math.random() * 30);
+          drops[i] = -Math.floor(Math.random() * 40);
         }
       }
 
-      // ── Horizontal scanline sweep ──────────────────
-      const scanY = ((frame * 0.4) % (H + 40)) - 20;
-      const scanGrad = ctx.createLinearGradient(0, scanY - 12, 0, scanY + 12);
+      /* ── Cyan scanline sweep (top→bottom ~8s) ── */
+      scanPhase += SCAN_SPEED;
+      if (scanPhase > H + 40) scanPhase = -40;
+
+      var scanGrad = ctx.createLinearGradient(0, scanPhase - 12, 0, scanPhase + 12);
       scanGrad.addColorStop(0,   'rgba(6, 182, 212, 0)');
-      scanGrad.addColorStop(0.5, 'rgba(6, 182, 212, 0.05)');
+      scanGrad.addColorStop(0.5, 'rgba(6, 182, 212, 0.04)');
       scanGrad.addColorStop(1,   'rgba(6, 182, 212, 0)');
       ctx.fillStyle = scanGrad;
-      ctx.fillRect(0, scanY - 12, W, 24);
+      ctx.fillRect(0, scanPhase - 12, W, 24);
 
       rafRef.current = requestAnimationFrame(draw);
     };
 
     draw();
 
-    const onResize = () => {
+    /* ── Resize handler ────────────────────────── */
+    var onResize = function() {
       W = canvas.width  = window.innerWidth;
       H = canvas.height = window.innerHeight;
-      nodes.forEach(n => {
-        n.x = Math.random() * W;
-        n.y = Math.random() * H;
-      });
+
+      // Recalculate matrix columns
+      COLS = Math.floor(W / COL_W) + 1;
+      drops = [];
+      speeds = [];
+      for (var ri = 0; ri < COLS; ri++) {
+        drops[ri]  = Math.random() * -80;
+        speeds[ri] = 0.3 + Math.random() * 0.7;
+      }
+
+      // Redistribute nodes
+      for (var ni = 0; ni < nodes.length; ni++) {
+        nodes[ni].x = Math.random() * W;
+        nodes[ni].y = Math.random() * H;
+      }
     };
     window.addEventListener('resize', onResize);
 
-    return () => {
+    /* ── Cleanup ───────────────────────────────── */
+    return function() {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener('resize', onResize);
     };
@@ -166,11 +215,14 @@ const CyberBackground = () => {
     <canvas
       ref={canvasRef}
       style={{
-        position:   'fixed',
-        inset:      0,
-        zIndex:     0,
+        position:      'fixed',
+        top:           0,
+        left:          0,
+        width:         '100%',
+        height:        '100%',
+        zIndex:        0,
         pointerEvents: 'none',
-        opacity:    0.55,
+        opacity:       0.5,
       }}
     />
   );

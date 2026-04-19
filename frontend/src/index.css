@@ -1970,3 +1970,474 @@ div[style*="border: 1px solid"][style*="borderRadius: 10"]:hover {
 .acc-value { font-size: 11px; color: var(--text2); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-warning-note { font-size: 10px; color: var(--amber); background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); padding: 10px; border-radius: 8px; margin-top: 14px; text-align: center; }
 
+/* ═══════════════════════════════════════════════════════════════════
+   PAIA GOD LEVEL UI — Enterprise SOC Design System v4.0
+   CrowdStrike Falcon + Vercel + Linear.app + Resend.com aesthetic
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── §13 ADDITIONAL KEYFRAMES ─────────────────────────────────── */
+
+@keyframes ripple {
+  0%  { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99,102,241,0.4); }
+  70% { transform: scale(1);    box-shadow: 0 0 0 12px rgba(99,102,241,0); }
+  100%{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+}
+
+@keyframes dataStream {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 0% 1000%; }
+}
+
+@keyframes neonFlicker {
+  0%, 18%, 26%, 53%, 57%, 100% { opacity: 1; }
+  19%, 25% { opacity: 0.7; }
+  54%, 56% { opacity: 0.75; }
+}
+
+@keyframes radarSweep {
+  0%   { transform: translate(-50%, -50%) rotate(0deg); }
+  100% { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes threatLevel {
+  0%, 100% { box-shadow: 0 0 6px rgba(255,59,92,0.15); }
+  50%      { box-shadow: 0 0 14px rgba(255,59,92,0.45), 0 0 4px rgba(255,59,92,0.3); }
+}
+
+@keyframes topbarScan {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes cardScanline {
+  0%   { transform: translateY(-200%); }
+  100% { transform: translateY(200%); }
+}
+
+/* ── §4 TOPBAR ───────────────────────────────────────────────── */
+
+.app-topbar {
+  background: rgba(5,5,9,0.92) !important;
+  backdrop-filter: blur(24px) saturate(1.4) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.4) !important;
+  border-bottom: 1px solid rgba(99,102,241,0.12) !important;
+  box-shadow: 0 1px 0 rgba(99,102,241,0.06), 0 4px 24px rgba(0,0,0,0.4) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.app-topbar::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 120px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(99,102,241,0.6), transparent);
+  animation: topbarScan 4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.topbar-logo-box {
+  box-shadow: 0 0 20px rgba(99,102,241,0.5), 0 0 40px rgba(99,102,241,0.2) !important;
+  animation: ripple 3s ease-out infinite !important;
+}
+
+.topbar-brand {
+  font-family: 'Syne', sans-serif !important;
+  font-weight: 800 !important;
+  background: linear-gradient(135deg, #c7d2fe, #818cf8, #a78bfa) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+}
+
+/* ── §5 SIDEBAR ──────────────────────────────────────────────── */
+
+.app-sidebar {
+  background: rgba(5,5,9,0.9) !important;
+  border-right: 1px solid rgba(99,102,241,0.08) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.app-sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(99,102,241,0.012) 2px, rgba(99,102,241,0.012) 4px);
+  background-size: 100% 8px;
+  animation: dataStream 8s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.nav-link {
+  position: relative !important;
+  overflow: hidden !important;
+  transition: all 0.25s cubic-bezier(0.4,0,0.2,1) !important;
+  z-index: 1;
+}
+
+.nav-link::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--indigo-l), transparent);
+  transform: scaleY(0);
+  transition: transform 0.25s ease;
+  pointer-events: none;
+}
+
+.nav-link.active::before {
+  transform: scaleY(1) !important;
+}
+
+.nav-link.active {
+  background: linear-gradient(90deg, rgba(79,70,229,0.18), transparent) !important;
+  box-shadow: inset 3px 0 12px rgba(99,102,241,0.08) !important;
+}
+
+.nav-link:hover:not(.active):not(.disabled) {
+  transform: translateX(3px) !important;
+  background: rgba(99,102,241,0.07) !important;
+}
+
+/* ── §6 CARD SYSTEM ──────────────────────────────────────────── */
+
+.dark-card {
+  background: rgba(10,10,20,0.8) !important;
+  border: 1px solid rgba(99,102,241,0.10) !important;
+  border-radius: 14px !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  transition: all 0.3s cubic-bezier(0.4,0,0.2,1) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.dark-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), transparent);
+  border-radius: 14px 0 40px 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.dark-card::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  top: 0;
+  background: linear-gradient(90deg, transparent, rgba(99,102,241,0.5), transparent);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.dark-card:hover::after {
+  opacity: 1;
+  animation: cardScanline 1s ease forwards;
+}
+
+.dark-card:hover {
+  border-color: rgba(99,102,241,0.25) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(99,102,241,0.06) !important;
+}
+
+/* ── §7 SEVERITY BADGES ──────────────────────────────────────── */
+
+.sev-badge {
+  font-family: 'JetBrains Mono', monospace !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  font-size: 9px !important;
+  border-radius: 4px !important;
+  padding: 2px 7px !important;
+  display: inline-block;
+}
+
+.sev-badge.critical {
+  background: rgba(255,59,92,0.12) !important;
+  color: #ff3b5c !important;
+  border: 1px solid rgba(255,59,92,0.25) !important;
+  box-shadow: 0 0 10px rgba(255,59,92,0.2);
+  animation: threatLevel 2s infinite;
+}
+
+.sev-badge.high {
+  background: rgba(255,107,53,0.12) !important;
+  color: #ff6b35 !important;
+  border: 1px solid rgba(255,107,53,0.25) !important;
+  box-shadow: 0 0 8px rgba(255,107,53,0.15);
+}
+
+.sev-badge.medium {
+  background: rgba(255,184,0,0.10) !important;
+  color: #ffb800 !important;
+  border: 1px solid rgba(255,184,0,0.20) !important;
+}
+
+.sev-badge.low {
+  background: rgba(129,140,248,0.10) !important;
+  color: #818cf8 !important;
+  border: 1px solid rgba(129,140,248,0.20) !important;
+}
+
+.sev-badge.info {
+  background: rgba(100,116,139,0.10) !important;
+  color: #94a3b8 !important;
+  border: 1px solid rgba(100,116,139,0.20) !important;
+}
+
+/* ── §8 TERMINAL ─────────────────────────────────────────────── */
+
+.terminal {
+  background: rgba(2,2,8,0.97) !important;
+  border: 1px solid rgba(99,102,241,0.2) !important;
+  box-shadow: 0 0 40px rgba(0,0,0,0.6), inset 0 0 40px rgba(0,0,0,0.3) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.terminal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(255,255,255,0.008) 1px, rgba(255,255,255,0.008) 2px);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.terminal-dot.red    { box-shadow: 0 0 6px #ff5f57 !important; }
+.terminal-dot.yellow { box-shadow: 0 0 6px #ffbd2e !important; }
+.terminal-dot.green  { box-shadow: 0 0 6px #28ca41 !important; }
+
+.terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: currentColor;
+  animation: blink 1s step-end infinite;
+}
+
+/* ── §9 AI THINKING PANEL ────────────────────────────────────── */
+
+.ai-thinking-panel {
+  background: rgba(5,5,12,0.95) !important;
+  border: 1px solid rgba(99,102,241,0.2) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.ai-thinking-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(-45deg, transparent, transparent 8px, rgba(99,102,241,0.015) 8px, rgba(99,102,241,0.015) 9px), linear-gradient(180deg, rgba(79,70,229,0.04) 0%, transparent 30%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ai-thinking-title {
+  font-family: 'Syne', sans-serif !important;
+  font-weight: 800 !important;
+  background: linear-gradient(90deg, #818cf8, #06b6d4) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+}
+
+.ai-step-indicator.running {
+  box-shadow: 0 0 12px rgba(99,102,241,0.3) !important;
+  animation: ripple 1.5s ease-out infinite !important;
+}
+
+.ai-step-indicator.done {
+  background: rgba(16,185,129,0.15) !important;
+  box-shadow: 0 0 8px rgba(16,185,129,0.2) !important;
+}
+
+/* ── §10 PAGE HEADERS ────────────────────────────────────────── */
+
+.page-header h2 {
+  font-family: 'Syne', sans-serif !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em !important;
+  font-size: 22px !important;
+  background: linear-gradient(90deg, #f0eeff, #c7d2fe, #a5b4fc) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+}
+
+/* ── §11 SEVERITY FILL BARS ──────────────────────────────────── */
+
+.severity-fill { position: relative; overflow: hidden; border-radius: 4px; }
+
+.severity-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.15) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+.severity-fill.critical { background: linear-gradient(90deg, #ff3b5c, #ff6b35) !important; box-shadow: 0 0 12px rgba(255,59,92,0.35); }
+.severity-fill.high     { background: linear-gradient(90deg, #ff6b35, #ffb800) !important; box-shadow: 0 0 10px rgba(255,107,53,0.25); }
+.severity-fill.medium   { background: linear-gradient(90deg, #ffb800, #fbbf24) !important; }
+.severity-fill.low      { background: linear-gradient(90deg, #818cf8, #06b6d4) !important; box-shadow: 0 0 8px rgba(129,140,248,0.2); }
+
+/* ── §12 HEALTH STATUS ───────────────────────────────────────── */
+
+.health-v.ok   { color: #34d399 !important; text-shadow: 0 0 12px rgba(52,211,153,0.4); }
+.health-v.warn { color: #fbbf24 !important; text-shadow: 0 0 12px rgba(251,191,36,0.3); }
+.health-v.info { color: #818cf8 !important; text-shadow: 0 0 12px rgba(129,140,248,0.3); }
+
+/* ── §14 INPUTS ──────────────────────────────────────────────── */
+
+input:focus, textarea:focus, select:focus {
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.12), 0 0 20px rgba(99,102,241,0.08) !important;
+  border-color: rgba(99,102,241,0.5) !important;
+  outline: none !important;
+}
+
+/* ── §15 NAV BADGE PULSE ─────────────────────────────────────── */
+
+.nav-badge.pulse { animation: neonFlicker 4s infinite; position: relative; }
+
+.nav-badge.pulse::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  border: 1px solid currentColor;
+  opacity: 0;
+  animation: ripple 2s ease-out infinite;
+  pointer-events: none;
+}
+
+/* ── §16 SCROLLBAR ───────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(99,102,241,0.3), rgba(99,102,241,0.1)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, rgba(99,102,241,0.5), rgba(99,102,241,0.2)); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── §18 EMPTY STATE ─────────────────────────────────────────── */
+
+.empty-icon {
+  animation: float 3s ease-in-out infinite;
+  box-shadow: 0 0 30px rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── §19 BANNER ──────────────────────────────────────────────── */
+
+.banner {
+  border: 1px solid rgba(99,102,241,0.2) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.banner::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -10%;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(6,182,212,0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ── §20 POSTURE RING ────────────────────────────────────────── */
+
+.posture-score-ring { position: relative !important; }
+
+.posture-score-ring::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  background: conic-gradient(from 0deg, rgba(99,102,241,0.15), transparent 60%, transparent 100%);
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  animation: radarSweep 3s linear infinite;
+  pointer-events: none;
+}
+
+.posture-score-value {
+  font-family: 'Syne', sans-serif !important;
+  font-weight: 800 !important;
+  background: linear-gradient(135deg, #818cf8, #06b6d4) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+}
+
+/* ── §EXTRA REPORT TABS ──────────────────────────────────────── */
+
+.report-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+
+.report-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.report-tab:hover { color: var(--text2); background: rgba(99,102,241,0.04); }
+.report-tab.active { color: var(--indigo-l); border-bottom-color: var(--indigo-l); background: rgba(99,102,241,0.06); }
+
+/* ── §EXTRA CARD TITLE + MISC ────────────────────────────────── */
+
+.card-title { font-family: 'Syne', 'Inter', sans-serif !important; font-weight: 700 !important; letter-spacing: -0.01em !important; }
+button { transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
+button:active { transform: scale(0.97); }
+
+*:focus-visible { outline: 2px solid rgba(99,102,241,0.4); outline-offset: 2px; }
+
+.main-content { position: relative; }
+.main-content::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.3) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+
+

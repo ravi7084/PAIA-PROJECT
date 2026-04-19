@@ -1,12 +1,13 @@
 /**
- * PAIA — Layout Wrapper (UPDATED)
- * Adds CyberBackground canvas animation
- * frontend/src/components/layout.jsx
+ * ╔══════════════════════════════════════════════╗
+ * ║   PAIA — Layout Wrapper (GOD-TIER v4)       ║
+ * ║   CyberBackground + Navbar + Sidebar + Main ║
+ * ╚══════════════════════════════════════════════╝
  */
 
-import Navbar           from './Navbar';
-import Sidebar          from './Sidebar';
-import CyberBackground  from './CyberBackground';
+import Navbar          from './Navbar';
+import Sidebar         from './Sidebar';
+import CyberBackground from './CyberBackground';
 
 const Layout = ({ children }) => (
   <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', position: 'relative' }}>
