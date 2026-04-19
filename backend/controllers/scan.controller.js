@@ -28,6 +28,7 @@ exports.startScan = async (req, res) => {
     if (type === 'network') kaliEndpoint = `http://${KALI_IP}:5000/nmap`;
     else if (type === 'subdomain') kaliEndpoint = `http://${KALI_IP}:5000/subfinder`;
     else if (type === 'webapp') kaliEndpoint = `http://${KALI_IP}:5000/nikto`;
+    else if (type === 'recon') kaliEndpoint = `http://${KALI_IP}:5000/recon`;
     else {
       return res.status(400).json({ success: false, message: 'Invalid scan type' });
     }

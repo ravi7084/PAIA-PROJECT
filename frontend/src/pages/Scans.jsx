@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   ScanLine, Search, Wifi, Globe, Shield, Play, 
   Loader2, CheckCircle2, AlertTriangle, List, 
-  ExternalLink, Trash2, Timer, Clock
+  ExternalLink, Trash2, Timer, Clock, Mail, Users
 } from 'lucide-react';
 import Layout from '../components/layout';
 import api from '../api/axios.config';
@@ -120,6 +120,14 @@ const Scans = () => {
               {loading && activeTab === 'webapp' ? <Loader2 className="animate-spin" size={18} /> : <Globe size={18} />}
               Web App
             </button>
+            <button 
+              onClick={() => handleStartScan('recon')}
+              disabled={loading || currentScanId}
+              className="px-4 py-2.5 bg-rose-600/20 text-rose-400 border border-rose-500/30 rounded-lg hover:bg-rose-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {loading && activeTab === 'recon' ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
+              Recon
+            </button>
           </div>
         </div>
         {currentScanId && (
@@ -131,12 +139,12 @@ const Scans = () => {
       </div>
 
       {/* ── Results Navigation ── */}
-      <div className="flex gap-2 mb-6 p-1 bg-[var(--bg-d)] border border-[var(--border)] rounded-xl inline-flex">
-        {['subdomain', 'network', 'webapp'].map(tab => (
+      <div className="flex gap-2 mb-6 p-1 bg-[var(--bg-d)] border border-[var(--border)] rounded-xl inline-flex overflow-x-auto max-w-full">
+        {['subdomain', 'network', 'webapp', 'recon'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-6 py-2 rounded-lg text-sm font-bold capitalize transition-all ${
+            className={`px-6 py-2 rounded-lg text-sm font-bold capitalize transition-all whitespace-nowrap ${
               activeTab === tab 
               ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
               : 'text-gray-500 hover:text-white'
@@ -180,6 +188,7 @@ const ScanResultCard = ({ scan }) => {
             {scan.type === 'subdomain' && <Search size={20} className="text-cyan-400" />}
             {scan.type === 'network' && <Wifi size={20} className="text-indigo-400" />}
             {scan.type === 'webapp' && <Shield size={20} className="text-emerald-400" />}
+            {scan.type === 'recon' && <Users size={20} className="text-rose-400" />}
           </div>
           <div>
             <h3 className="font-bold text-lg text-white">{scan.target}</h3>
@@ -287,6 +296,78 @@ const ResultRenderer = ({ type, result }) => {
           {(!result.findings || result.findings.length === 0) && (
             <p className="text-gray-500 italic p-4 text-center">No high-risk vulnerabilities flagged in initial sweep.</p>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'recon') {
+    return (
+      <div className="space-y-6">
+        {/* Counts */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 bg-rose-500/5 border border-rose-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Mail className="text-rose-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Emails Found</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.summary?.totalEmails || 0}</div>
+          </div>
+          <div className="p-4 bg-cyan-500/5 border border-cyan-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Globe className="text-cyan-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Subdomains</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.summary?.totalSubdomains || 0}</div>
+          </div>
+          <div className="p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Wifi className="text-indigo-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">IPs Linked</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.summary?.totalIPs || 0}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Email List */}
+          <div>
+            <h4 className="text-rose-400 font-bold mb-3 flex items-center gap-2 text-sm"><Mail size={16} /> Discovered Emails</h4>
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+              {result.emails && result.emails.map((email, i) => (
+                <div key={i} className="p-2.5 px-3 bg-[#1a1b2e] border border-[var(--border)] rounded-lg text-gray-300 text-xs truncate">
+                  {email}
+                </div>
+              ))}
+              {(!result.emails || result.emails.length === 0) && <p className="text-gray-600 text-xs p-4 border border-dashed border-[var(--border)] rounded-lg text-center">No emails found.</p>}
+            </div>
+          </div>
+
+          {/* IP List */}
+          <div>
+            <h4 className="text-indigo-400 font-bold mb-3 flex items-center gap-2 text-sm"><Wifi size={16} /> Related IP Addresses</h4>
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+              {result.ips && result.ips.map((ip, i) => (
+                <div key={i} className="p-2.5 px-3 bg-[#1a1b2e] border border-[var(--border)] rounded-lg text-gray-300 font-mono text-xs">
+                  {ip}
+                </div>
+              ))}
+              {(!result.ips || result.ips.length === 0) && <p className="text-gray-600 text-xs p-4 border border-dashed border-[var(--border)] rounded-lg text-center">No IPs found.</p>}
+            </div>
+          </div>
+        </div>
+
+        {/* Subdomains Table */}
+        <div>
+          <h4 className="text-cyan-400 font-bold mb-3 flex items-center gap-2 text-sm"><Globe size={16} /> Infrastructure Discovery</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            {result.subdomains && result.subdomains.map((sub, i) => (
+              <div key={i} className="p-2 px-3 bg-[#1a1b2e] border border-[var(--border)] rounded-lg text-white font-mono text-[10px] flex items-center justify-between group hover:border-cyan-500/40 transition-all">
+                {sub}
+                <ExternalLink size={10} className="text-gray-700 group-hover:text-cyan-400 cursor-pointer" />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
