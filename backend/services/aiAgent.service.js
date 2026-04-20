@@ -16,6 +16,7 @@ const gemini = require('./gemini.service');
 const threatIntel = require('./threatIntel.service');
 const nvdVulners = require('./nvdVulners.service');
 const mitreAttack = require('./mitreAttack.service');
+const builtinScanner = require('./builtinScanner.service');
 const logger = require('../utils/logger');
 
 /* ── Socket.io helper ── */
@@ -73,53 +74,22 @@ const httpGet = (url, timeoutMs) => {
   });
 };
 
-/* ── Spawn CLI tool with timeout ── */
-const spawnTool = (bin, args, timeoutMs) => {
-  return new Promise((resolve) => {
-    var stdout = '';
-    var stderr = '';
-    var killed = false;
-    var timer = null;
-
-    try {
-      var proc = spawn(bin, args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
-
-      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-      proc.on('error', (err) => {
-        if (timer) clearTimeout(timer);
-        // ENOENT = tool not installed
-        if (err.code === 'ENOENT') {
-          resolve({ installed: false, stdout: '', stderr: err.message, exitCode: -1, timedOut: false });
-        } else {
-          resolve({ installed: true, stdout: stdout, stderr: stderr + '\n' + err.message, exitCode: -1, timedOut: false });
-        }
-      });
-
-      proc.on('close', (code) => {
-        if (timer) clearTimeout(timer);
-        resolve({ installed: true, stdout: stdout, stderr: stderr, exitCode: code, timedOut: killed });
-      });
-
-      timer = setTimeout(() => {
-        killed = true;
-        try { proc.kill('SIGTERM'); } catch (e) { /* ignore */ }
-        setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch (e) { /* ignore */ }
-        }, 3000);
-      }, timeoutMs || 180000);
-    } catch (err) {
-      if (err.code === 'ENOENT') {
-        resolve({ installed: false, stdout: '', stderr: err.message, exitCode: -1, timedOut: false });
-      } else {
-        resolve({ installed: true, stdout: '', stderr: err.message, exitCode: -1, timedOut: false });
-      }
+/* ── Spawn CLI tool with timeout (modified for Kali integration) ── */
+const spawnTool = async (bin, args, timeoutMs) => {
+  try {
+    const { runRemoteExecutable } = require('../utils/commandRunner');
+    const stdout = await runRemoteExecutable(bin, args, { timeout: timeoutMs || 180000 });
+    return { installed: true, stdout: stdout, stderr: '', exitCode: 0, timedOut: false };
+  } catch (err) {
+    const errorMsg = err.message || '';
+    if (errorMsg.includes('ENOENT') || errorMsg.includes('not found') || errorMsg.includes('not recognized') || errorMsg.includes('command not found')) {
+      return { installed: false, stdout: '', stderr: errorMsg, exitCode: -1, timedOut: false };
     }
-  });
+    if (errorMsg.includes('timed out')) {
+      return { installed: true, stdout: '', stderr: errorMsg, exitCode: -1, timedOut: true };
+    }
+    return { installed: true, stdout: errorMsg, stderr: errorMsg, exitCode: -1, timedOut: false };
+  }
 };
 
 /* ── Extract domain from target (strip www. prefix) ── */
@@ -300,6 +270,16 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
 
 
     /* ═══════════════════════════════════════════
+       PHASE 2.5 — Target Preparation
+       ═══════════════════════════════════════════ */
+    var scanTargets = [cleanTarget];
+    if (subdomains && subdomains.length > 0) {
+      var additional = subdomains.filter(s => s !== cleanTarget).slice(0, 3);
+      for (var i = 0; i < additional.length; i++) scanTargets.push(additional[i]);
+    }
+
+
+    /* ═══════════════════════════════════════════
        PHASE 3 — DNS Records via Node.js dns.promises (34% → 42%)
        ═══════════════════════════════════════════ */
     var dnsResults = {};
@@ -385,96 +365,87 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
 
 
     /* ═══════════════════════════════════════════
-       PHASE 4 — Nmap Port Scan (44% → 60%)
+       PHASE 4 — Nmap Port Scan (44% → 55%)
        ═══════════════════════════════════════════ */
     var nmapResults = { openPorts: [], raw: '' };
     try {
-      await updateProgress(scanId, 'nmap_scan', 44, 'Running Nmap port scan...');
+      await updateProgress(scanId, 'nmap_scan', 44, 'Running Nmap port scan on ' + scanTargets.length + ' targets...');
       emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'running' });
       emit(io, scanId, 'ai:tool_running', { tool: 'nmap' });
 
-      // Determine scan target: prefer resolved IP for domains
-      var nmapTarget = cleanTarget;
-      if (!isIP(cleanTarget) && dnsResults.A && dnsResults.A.length > 0) {
-        nmapTarget = dnsResults.A[0];
-      }
-
       var nmapBin = process.env.NMAP_BIN || 'nmap';
-      logger.info('Phase 4: Nmap scan — target=' + nmapTarget + ' bin=' + nmapBin);
+      var allOpenPorts = [];
+      var nmapRawCombined = '';
+      var nmapInstalled = true;
 
-      var nmapOutput = await spawnTool(nmapBin, ['-sV', '-Pn', '--top-ports', '1000', nmapTarget], 180000);
-
-      if (!nmapOutput.installed) {
-        logger.warn('Nmap not installed — skipping port scan');
-        nmapResults = { installed: false };
-
-        completedScans.push({ tool: 'nmap', status: 'skipped', data: { installed: false, reason: 'Nmap not installed' } });
-        usedTools.push('nmap');
-
-        await ScanSession.findByIdAndUpdate(scanId, {
-          $push: {
-            phases: {
-              name: 'network',
-              status: 'skipped',
-              tools: ['nmap'],
-              results: { installed: false },
-              startedAt: new Date(),
-              finishedAt: new Date(),
-            },
-          },
-        });
-      } else {
-        // Parse open ports from nmap output
-        var openPorts = [];
-        var nmapLines = nmapOutput.stdout.split('\n');
-        var portRegex = /^(\d+)\/(tcp|udp)\s+open\s+(\S+)\s*(.*)?$/;
-
-        for (var pi = 0; pi < nmapLines.length; pi++) {
-          var match = nmapLines[pi].trim().match(portRegex);
-          if (match) {
-            openPorts.push({
-              port: parseInt(match[1], 10),
-              protocol: match[2],
-              service: match[3],
-              version: (match[4] || '').trim(),
-            });
-          }
+      for (var ti = 0; ti < scanTargets.length; ti++) {
+        var currentTarget = scanTargets[ti];
+        var nmapTarget = currentTarget;
+        if (currentTarget === cleanTarget && !isIP(cleanTarget) && dnsResults.A && dnsResults.A.length > 0) {
+          nmapTarget = dnsResults.A[0];
         }
 
-        nmapResults = {
-          installed: true,
-          openPorts: openPorts,
-          portCount: openPorts.length,
-          raw: nmapOutput.stdout.slice(0, 3000),
-          exitCode: nmapOutput.exitCode,
-          timedOut: nmapOutput.timedOut,
-        };
+        logger.info('Phase 4: Nmap scan — target=' + nmapTarget + ' bin=' + nmapBin);
+        var nmapOutput = await spawnTool(nmapBin, ['-sV', '-Pn', '--top-ports', '1000', nmapTarget], 180000);
 
-        completedScans.push({ tool: 'nmap', status: 'success', data: nmapResults });
-        usedTools.push('nmap');
-
-        await ScanSession.findByIdAndUpdate(scanId, {
-          $push: {
-            phases: {
-              name: 'network',
-              status: 'completed',
-              tools: ['nmap'],
-              results: { openPorts: openPorts.length, ports: openPorts.slice(0, 20) },
-              startedAt: new Date(),
-              finishedAt: new Date(),
-            },
-          },
-        });
-
-        logger.info('Phase 4 completed: ' + openPorts.length + ' open ports found');
+        if (!nmapOutput.installed) {
+          nmapInstalled = false;
+          logger.warn('Nmap not installed — fallback Built-in Port Scanner for: ' + nmapTarget);
+          const portScanResult = await builtinScanner.scanPorts(nmapTarget);
+          nmapRawCombined += `\n[${nmapTarget}] Built-in Scan: ` + JSON.stringify(portScanResult.openPorts || []);
+          if (portScanResult.openPorts) {
+             allOpenPorts.push(...portScanResult.openPorts);
+          }
+        } else {
+          var nmapLines = nmapOutput.stdout.split('\n');
+          var portRegex = /^(\d+)\/(tcp|udp)\s+open\s+(\S+)\s*(.*)?$/;
+          for (var pi = 0; pi < nmapLines.length; pi++) {
+            var match = nmapLines[pi].trim().match(portRegex);
+            if (match) {
+              allOpenPorts.push({
+                target: nmapTarget,
+                port: parseInt(match[1], 10),
+                protocol: match[2],
+                service: match[3],
+                version: (match[4] || '').trim(),
+              });
+            }
+          }
+          nmapRawCombined += `\n[${nmapTarget}]:\n` + nmapOutput.stdout.slice(0, 1000);
+        }
       }
 
-      emit(io, scanId, 'ai:tool_complete', { tool: 'nmap', status: nmapResults.installed === false ? 'skipped' : 'success' });
-      await updateProgress(scanId, 'nmap_scan', 60, nmapResults.installed === false ? 'Nmap not installed, skipped' : 'Nmap scan complete — ' + (nmapResults.openPorts || []).length + ' ports open');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: nmapResults.installed === false ? 'skipped' : 'completed' });
+      nmapResults = {
+        installed: nmapInstalled,
+        openPorts: allOpenPorts,
+        portCount: allOpenPorts.length,
+        raw: nmapRawCombined.slice(0, 3000),
+      };
+
+      var toolName = nmapInstalled ? 'nmap' : 'nmap_fallback';
+      usedTools.push(nmapInstalled ? 'nmap' : 'builtin_port_scanner');
+      completedScans.push({ tool: toolName, status: 'success', data: nmapResults });
+
+      await ScanSession.findByIdAndUpdate(scanId, {
+        $push: {
+          phases: {
+            name: 'network',
+            status: 'completed',
+            tools: [toolName],
+            results: { openPorts: allOpenPorts.length, ports: allOpenPorts.slice(0, 20) },
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        },
+      });
+
+      logger.info('Phase 4 completed: ' + allOpenPorts.length + ' open ports found across targets');
+      emit(io, scanId, 'ai:tool_complete', { tool: 'nmap', status: 'success' });
+      await updateProgress(scanId, 'nmap_scan', 55, (nmapInstalled ? 'Nmap' : 'Built-in Port Scan') + ' complete — ' + allOpenPorts.length + ' ports open');
+      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'completed' });
     } catch (err) {
       logger.warn('Phase 4 (Nmap) failed: ' + err.message);
-      await updateProgress(scanId, 'nmap_scan', 60, 'Nmap scan failed, continuing...');
+      await updateProgress(scanId, 'nmap_scan', 55, 'Nmap scan failed, continuing...');
       emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'failed' });
 
       await ScanSession.findByIdAndUpdate(scanId, {
@@ -493,11 +464,41 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
 
 
     /* ═══════════════════════════════════════════
-       PHASE 5 — Nikto Web Scan (62% → 72%)
+       PHASE 4.5 — Built-in Security Scan (55% → 60%)
+       ═══════════════════════════════════════════ */
+    try {
+      await updateProgress(scanId, 'builtin_scan', 55, 'Running Built-in Security Scans...');
+      emit(io, scanId, 'ai:phase_update', { phase: 'builtin_scan', status: 'running' });
+
+      var builtinAllResults = [];
+      for (var ti = 0; ti < scanTargets.length; ti++) {
+        var currentTarget = scanTargets[ti];
+        logger.info('Phase 4.5: Built-in scans — target=' + currentTarget);
+        
+        const techResult = await builtinScanner.detectTechnology(currentTarget);
+        const robotsResult = await builtinScanner.checkRobotsSitemap(currentTarget);
+        
+        builtinAllResults.push({ target: currentTarget, technology: techResult, robotsSitemap: robotsResult });
+        
+        if (techResult && techResult.findings) allVulnerabilities.push(...techResult.findings);
+        if (robotsResult && robotsResult.findings) allVulnerabilities.push(...robotsResult.findings);
+      }
+      
+      completedScans.push({ tool: 'builtin_security', status: 'success', data: builtinAllResults });
+      usedTools.push('builtin_security');
+
+      await updateProgress(scanId, 'builtin_scan', 60, 'Built-in scans complete');
+      emit(io, scanId, 'ai:phase_update', { phase: 'builtin_scan', status: 'completed' });
+    } catch (err) {
+      logger.warn('Phase 4.5 (Built-in) failed: ' + err.message);
+    }
+
+
+    /* ═══════════════════════════════════════════
+       PHASE 5 — Nikto Web Scan (60% → 70%)
        ═══════════════════════════════════════════ */
     var niktoResults = { findings: [], raw: '' };
     try {
-      // Determine whether to run Nikto
       var webPorts = [80, 443, 8080, 8443, 8000, 8888, 3000];
       var hasWebPort = false;
       var nmapOpenPorts = (nmapResults && nmapResults.openPorts) || [];
@@ -512,7 +513,7 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
 
       if (!shouldRunNikto) {
         logger.info('Phase 5: Skipping Nikto — no web ports detected and scope is not web');
-        await updateProgress(scanId, 'nikto_scan', 72, 'Nikto skipped (no web ports or network-only scope)');
+        await updateProgress(scanId, 'nikto_scan', 70, 'Nikto skipped (no web ports or network-only scope)');
 
         completedScans.push({ tool: 'nikto', status: 'skipped', data: { reason: 'No web ports detected' } });
         usedTools.push('nikto');
@@ -530,90 +531,87 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
           },
         });
       } else {
-        await updateProgress(scanId, 'nikto_scan', 62, 'Running Nikto web vulnerability scan...');
+        await updateProgress(scanId, 'nikto_scan', 62, 'Running Nikto web vulnerability scan on ' + scanTargets.length + ' targets...');
         emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'running' });
         emit(io, scanId, 'ai:tool_running', { tool: 'nikto' });
 
         var niktoBin = process.env.NIKTO_BIN || 'nikto';
-        var niktoTarget = 'http://' + cleanTarget;
-        logger.info('Phase 5: Nikto scan — target=' + niktoTarget + ' bin=' + niktoBin);
+        var allNiktoFindings = [];
+        var niktoRawCombined = '';
+        var niktoInstalled = true;
 
-        var niktoOutput = await spawnTool(niktoBin, ['-h', niktoTarget, '-nointeractive'], 180000);
+        for (var ti = 0; ti < scanTargets.length; ti++) {
+          var currentTarget = scanTargets[ti];
+          var niktoTarget = 'http://' + currentTarget;
+          logger.info('Phase 5: Nikto scan — target=' + niktoTarget + ' bin=' + niktoBin);
 
-        if (!niktoOutput.installed) {
-          logger.warn('Nikto not installed — skipping web scan');
-          niktoResults = { installed: false };
+          var niktoOutput = await spawnTool(niktoBin, ['-h', niktoTarget, '-nointeractive'], 180000);
 
-          completedScans.push({ tool: 'nikto', status: 'skipped', data: { installed: false, reason: 'Nikto not installed' } });
-          usedTools.push('nikto');
-
-          await ScanSession.findByIdAndUpdate(scanId, {
-            $push: {
-              phases: {
-                name: 'webapp',
-                status: 'skipped',
-                tools: ['nikto'],
-                results: { installed: false },
-                startedAt: new Date(),
-                finishedAt: new Date(),
-              },
-            },
-          });
-        } else {
-          // Parse Nikto findings from lines starting with '+ '
-          var niktoFindings = [];
-          var niktoLines = niktoOutput.stdout.split('\n');
-          for (var nk = 0; nk < niktoLines.length; nk++) {
-            var line = niktoLines[nk].trim();
-            if (line.indexOf('+ ') === 0 && line.length > 10) {
-              var finding = line.substring(2).trim();
-              // Filter out informational lines like "+ Target IP:"
-              if (finding.indexOf('Target IP:') === -1 &&
-                  finding.indexOf('Target Hostname:') === -1 &&
-                  finding.indexOf('Target Port:') === -1 &&
-                  finding.indexOf('Start Time:') === -1 &&
-                  finding.indexOf('End Time:') === -1 &&
-                  finding.indexOf('host(s) tested') === -1) {
-                niktoFindings.push(finding);
+          if (!niktoOutput.installed) {
+            niktoInstalled = false;
+            logger.warn('Nikto not installed — fallback Built-in Web Scanner for: ' + currentTarget);
+            
+            const headersResult = await builtinScanner.checkSecurityHeaders(currentTarget);
+            const sslResult = await builtinScanner.checkSSL(currentTarget);
+            
+            if (headersResult && headersResult.findings) allVulnerabilities.push(...headersResult.findings);
+            if (sslResult && sslResult.findings) allVulnerabilities.push(...sslResult.findings);
+            
+            const fw_findings = [...(headersResult.findings || []), ...(sslResult.findings || [])].map(f => `[${currentTarget}] ` + f.title + ': ' + f.description);
+            allNiktoFindings.push(...fw_findings);
+            niktoRawCombined += `\n[${currentTarget}] Built-in Web Scan completed.`;
+          } else {
+            var niktoLines = niktoOutput.stdout.split('\n');
+            for (var nk = 0; nk < niktoLines.length; nk++) {
+              var line = niktoLines[nk].trim();
+              if (line.indexOf('+ ') === 0 && line.length > 10) {
+                var finding = line.substring(2).trim();
+                if (finding.indexOf('Target IP:') === -1 &&
+                    finding.indexOf('Target Hostname:') === -1 &&
+                    finding.indexOf('Target Port:') === -1 &&
+                    finding.indexOf('Start Time:') === -1 &&
+                    finding.indexOf('End Time:') === -1 &&
+                    finding.indexOf('host(s) tested') === -1) {
+                  allNiktoFindings.push(`[${currentTarget}] ` + finding);
+                }
               }
             }
+            niktoRawCombined += `\n[${currentTarget}]:\n` + niktoOutput.stdout.slice(0, 1000);
           }
-
-          niktoResults = {
-            installed: true,
-            findings: niktoFindings,
-            findingCount: niktoFindings.length,
-            raw: niktoOutput.stdout.slice(0, 3000),
-            exitCode: niktoOutput.exitCode,
-            timedOut: niktoOutput.timedOut,
-          };
-
-          completedScans.push({ tool: 'nikto', status: 'success', data: niktoResults });
-          usedTools.push('nikto');
-
-          await ScanSession.findByIdAndUpdate(scanId, {
-            $push: {
-              phases: {
-                name: 'webapp',
-                status: 'completed',
-                tools: ['nikto'],
-                results: { findingCount: niktoFindings.length, findings: niktoFindings.slice(0, 20) },
-                startedAt: new Date(),
-                finishedAt: new Date(),
-              },
-            },
-          });
-
-          logger.info('Phase 5 completed: ' + niktoFindings.length + ' Nikto findings');
         }
 
-        emit(io, scanId, 'ai:tool_complete', { tool: 'nikto', status: (niktoResults.installed === false) ? 'skipped' : 'success' });
-        await updateProgress(scanId, 'nikto_scan', 72, (niktoResults.installed === false) ? 'Nikto not installed, skipped' : 'Nikto scan complete — ' + (niktoResults.findings || []).length + ' findings');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: (niktoResults.installed === false) ? 'skipped' : 'completed' });
+        niktoResults = {
+          installed: niktoInstalled,
+          findings: allNiktoFindings,
+          findingCount: allNiktoFindings.length,
+          raw: niktoRawCombined.slice(0, 3000)
+        };
+
+        var ntoolName = niktoInstalled ? 'nikto' : 'nikto_fallback';
+        usedTools.push(niktoInstalled ? 'nikto' : 'builtin_web_scanner');
+        completedScans.push({ tool: ntoolName, status: 'success', data: niktoResults });
+
+        await ScanSession.findByIdAndUpdate(scanId, {
+          $push: {
+            phases: {
+              name: 'webapp',
+              status: 'completed',
+              tools: [ntoolName],
+              results: { findingCount: allNiktoFindings.length, findings: allNiktoFindings.slice(0, 20) },
+              startedAt: new Date(),
+              finishedAt: new Date(),
+            },
+          },
+        });
+
+        logger.info('Phase 5 completed: ' + allNiktoFindings.length + ' Nikto findings across targets');
+        emit(io, scanId, 'ai:tool_complete', { tool: 'nikto', status: 'success' });
+        await updateProgress(scanId, 'nikto_scan', 70, (niktoInstalled ? 'Nikto' : 'Built-in Web Scan') + ' complete — ' + allNiktoFindings.length + ' findings');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'completed' });
       }
     } catch (err) {
       logger.warn('Phase 5 (Nikto) failed: ' + err.message);
-      await updateProgress(scanId, 'nikto_scan', 72, 'Nikto scan failed, continuing...');
+      await updateProgress(scanId, 'nikto_scan', 70, 'Nikto scan failed, continuing...');
       emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'failed' });
 
       await ScanSession.findByIdAndUpdate(scanId, {
@@ -629,7 +627,6 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
         },
       });
     }
-
 
     /* ═══════════════════════════════════════════
        PHASE 6 — NVD + Vulners Enrichment (62% → 72%)

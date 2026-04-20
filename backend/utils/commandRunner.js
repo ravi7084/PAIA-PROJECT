@@ -7,6 +7,7 @@
 
 const { exec, spawn } = require('child_process');
 const logger = require('./logger');
+const path = require('path');
 
 /**
  * Runs a CLI command using spawn for better path handling (especially Windows spaces).
