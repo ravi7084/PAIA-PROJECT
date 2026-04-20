@@ -29,6 +29,8 @@ exports.startScan = async (req, res) => {
     else if (type === 'subdomain') kaliEndpoint = `http://${KALI_IP}:5000/subfinder`;
     else if (type === 'webapp') kaliEndpoint = `http://${KALI_IP}:5000/nikto`;
     else if (type === 'recon') kaliEndpoint = `http://${KALI_IP}:5000/recon`;
+    else if (type === 'exploit') kaliEndpoint = `http://${KALI_IP}:5000/exploit`;
+    else if (type === 'traffic') kaliEndpoint = `http://${KALI_IP}:5000/traffic`;
     else {
       return res.status(400).json({ success: false, message: 'Invalid scan type' });
     }
@@ -41,12 +43,44 @@ exports.startScan = async (req, res) => {
     
     axios.post(kaliEndpoint, { target })
       .then(async (response) => {
+        const scanData = response.data;
+        let enriched = null;
+        let report = null;
+
+        // --- PIPELINE STEP 1: NVD Enrichment ---
+        try {
+          const nvdUrl = `${process.env.NVD_SERVICE_URL}/scan`;
+          const nvdRes = await axios.post(nvdUrl, { scanOutput: JSON.stringify(scanData) });
+          enriched = nvdRes.data;
+        } catch (err) {
+          logger.error(`Pipeline Error (NVD): ${err.message}`);
+        }
+
+        // --- PIPELINE STEP 2: Report Generation ---
+        try {
+          const reportUrl = `${process.env.REPORT_SERVICE_URL}/generate`;
+          const reportRes = await axios.post(reportUrl, {
+            target,
+            scanResults: JSON.stringify(scanData),
+            cveData: enriched?.results || [],
+            logs: JSON.stringify(scanData)
+          });
+          report = reportRes.data;
+        } catch (err) {
+          logger.error(`Pipeline Error (Report): ${err.message}`);
+        }
+
+        // --- FINAL UPDATE ---
         await Scan.findByIdAndUpdate(newScan._id, {
           status: 'completed',
-          result: response.data,
+          result: scanData,
+          enrichedData: enriched,
+          reportId: report?.reportId || null,
+          reportUrl: report?.downloadUrl || null,
           finishedAt: new Date()
         });
-        logger.info(`${type} scan for ${target} completed successfully`);
+        
+        logger.info(`${type} scan for ${target} completed with intelligence enrichment`);
       })
       .catch(async (error) => {
         logger.error(`Kali API Error for ${type} scan: ${error.message}`);

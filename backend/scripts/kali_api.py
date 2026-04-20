@@ -143,6 +143,124 @@ def recon_scan():
         }
     })
 
+@app.route('/exploit', methods=['POST'])
+def exploit_scan():
+    target = request.json.get('target')
+    if not target:
+        return jsonify({"error": "No target provided"}), 400
+    
+    # Define safe modules for check (No destructive payloads)
+    modules = [
+        {"name": "MS17-010 (EternalBlue)", "path": "exploit/windows/smb/ms17_010_eternalblue"},
+        {"name": "vsftpd 2.3.4 Backdoor", "path": "exploit/unix/ftp/vsftpd_234_backdoor"},
+        {"name": "Shellshock (Apache CGI)", "path": "exploit/linux/http/apache_mod_cgi_bash_env_exec"},
+        {"name": "ProFTPD 1.3.5 Mod_Copy", "path": "exploit/unix/ftp/proftpd_modcopy_exec"}
+    ]
+
+    results = []
+    attempted = []
+    success_count = 0
+    
+    print(f"Starting Metasploit safe check for {target}...")
+
+    for mod in modules:
+        attempted.append(mod['path'])
+        # Run msfconsole check command
+        # -q: quiet, -x: execute command
+        cmd = f"msfconsole -q -x 'use {mod['path']}; set RHOSTS {target}; check; exit'"
+        print(f"Checking {mod['name']}...")
+        stdout, stderr = run_tool(cmd)
+        
+        is_vuln = False
+        access = "None"
+        
+        # Check for vulnerability indicators in msf output
+        if "The target is vulnerable" in stdout or "VULNERABLE" in stdout:
+            is_vuln = True
+            success_count += 1
+            access = "Check Only (Safe)"
+        
+        results.append({
+            "name": mod['name'],
+            "status": "Success (Vulnerable)" if is_vuln else "Failed (Not Vulnerable)",
+            "access": access
+        })
+
+    return jsonify({
+        "tool": "exploit",
+        "target": target,
+        "exploits_attempted": attempted,
+        "successful_exploits": [r for r in results if "Success" in r['status']],
+        "failed_exploits": [r for r in results if "Failed" in r['status']],
+        "summary": {
+            "attempted": len(modules),
+            "success": success_count,
+            "failed": len(modules) - success_count
+        }
+    })
+
+@app.route('/traffic', methods=['POST'])
+def traffic_analysis():
+    target = request.json.get('target') # target might be used for filtering but tshark -i any captures all
+    if not target:
+        return jsonify({"error": "No target provided"}), 400
+    
+    print(f"Starting Traffic Analysis (Capture 100 packets)...")
+    
+    # Capture 100 packets, output as JSON
+    # -c 100: packet count
+    # -T json: machine readable
+    # -e ip.src -e ip.dst -e _ws.col.Protocol: fields to extract
+    cmd = "tshark -i any -c 100 -T json -e ip.src -e ip.dst -e _ws.col.Protocol"
+    stdout, stderr = run_tool(cmd)
+    
+    try:
+        data = json.loads(stdout)
+    except:
+        return jsonify({"error": "Failed to parse tshark output", "details": stderr}), 500
+
+    packets = []
+    protocol_counts = {}
+    insecure_count = 0
+    unique_conns = {}
+
+    for frame in data:
+        sources = frame.get("_source", {}).get("layers", {})
+        src_ip = sources.get("ip.src", ["unknown"])[0]
+        dest_ip = sources.get("ip.dst", ["unknown"])[0]
+        protocol = sources.get("_ws.col.Protocol", ["unknown"])[0]
+
+        # Update protocol counts
+        protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
+        
+        # Check risk
+        risk = "low"
+        if protocol in ["HTTP", "FTP", "Telnet"]:
+            risk = "high"
+            insecure_count += 1
+        
+        # Track unique connections for the table
+        conn_key = f"{src_ip}-{dest_ip}-{protocol}"
+        if conn_key not in unique_conns:
+            unique_conns[conn_key] = {
+                "src_ip": src_ip,
+                "dest_ip": dest_ip,
+                "protocol": protocol,
+                "risk": risk
+            }
+
+    return jsonify({
+        "tool": "traffic",
+        "target": target,
+        "total_packets": len(data),
+        "insecure_packets": insecure_count,
+        "protocols": protocol_counts,
+        "connections": list(unique_conns.values())[:50], # Limit table size
+        "summary": {
+            "risk": "high" if insecure_count > 0 else "low"
+        }
+    })
+
 if __name__ == '__main__':
     # Listen on all interfaces so Windows can connect
     app.run(host='0.0.0.0', port=5000)

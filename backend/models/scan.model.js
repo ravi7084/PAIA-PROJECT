@@ -8,7 +8,7 @@ const scanSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['network', 'subdomain', 'webapp', 'recon'],
+    enum: ['network', 'subdomain', 'webapp', 'recon', 'exploit', 'traffic'],
     required: true
   },
   status: {
@@ -26,6 +26,18 @@ const scanSchema = new mongoose.Schema({
   },
   finishedAt: {
     type: Date
+  },
+  reportId: {
+    type: String,
+    default: null
+  },
+  reportUrl: {
+    type: String,
+    default: null
+  },
+  enrichedData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
   }
 });
 

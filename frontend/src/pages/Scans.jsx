@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import {
   ScanLine, Search, Wifi, Globe, Shield, Play, 
   Loader2, CheckCircle2, AlertTriangle, List, 
-  ExternalLink, Trash2, Timer, Clock, Mail, Users
+  ExternalLink, Trash2, Timer, Clock, Mail, Users,
+  Zap, Skull, Target, Activity, ArrowLeftRight, FileText
 } from 'lucide-react';
 import Layout from '../components/layout';
 import api from '../api/axios.config';
@@ -141,6 +142,22 @@ const Scans = () => {
               {loading && activeTab === 'recon' ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
               Recon
             </button>
+            <button 
+              onClick={() => handleStartScan('exploit')}
+              disabled={loading || currentScanId}
+              className="px-4 py-2.5 bg-rose-600/20 text-rose-400 border border-rose-500/30 rounded-lg hover:bg-rose-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {loading && activeTab === 'exploit' ? <Loader2 className="animate-spin" size={18} /> : <Skull size={18} />}
+              Exploit
+            </button>
+            <button 
+              onClick={() => handleStartScan('traffic')}
+              disabled={loading || currentScanId}
+              className="px-4 py-2.5 bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 rounded-lg hover:bg-indigo-600/30 flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {loading && activeTab === 'traffic' ? <Loader2 className="animate-spin" size={18} /> : <Activity size={18} />}
+              Traffic Analysis
+            </button>
           </div>
         </div>
         {currentScanId && (
@@ -153,7 +170,7 @@ const Scans = () => {
 
       {/* ── Results Navigation ── */}
       <div className="flex gap-2 mb-6 p-1 bg-[var(--bg-d)] border border-[var(--border)] rounded-xl inline-flex overflow-x-auto max-w-full">
-        {['subdomain', 'network', 'webapp', 'recon'].map(tab => (
+        {['subdomain', 'network', 'webapp', 'recon', 'exploit', 'traffic'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -163,7 +180,7 @@ const Scans = () => {
               : 'text-gray-500 hover:text-white'
             }`}
           >
-            {tab} Results
+            {tab === 'exploit' ? 'Exploits' : tab === 'traffic' ? 'Traffic' : `${tab} Results`}
           </button>
         ))}
       </div>
@@ -202,6 +219,8 @@ const ScanResultCard = ({ scan, onDelete }) => {
             {scan.type === 'network' && <Wifi size={20} className="text-indigo-400" />}
             {scan.type === 'webapp' && <Shield size={20} className="text-emerald-400" />}
             {scan.type === 'recon' && <Users size={20} className="text-rose-400" />}
+            {scan.type === 'exploit' && <Skull size={20} className="text-rose-500" />}
+            {scan.type === 'traffic' && <Activity size={20} className="text-indigo-400" />}
           </div>
           <div>
             <h3 className="font-bold text-lg text-white">{scan.target}</h3>
@@ -214,6 +233,18 @@ const ScanResultCard = ({ scan, onDelete }) => {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {scan.reportUrl && (
+            <a 
+              href={`http://localhost:5001${scan.reportUrl}`} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md hover:bg-emerald-500/20 transition-all text-xs font-bold"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <FileText size={14} />
+              View Report
+            </a>
+          )}
           <Trash2 
             size={18} 
             className="text-gray-600 hover:text-rose-500 transition-colors cursor-pointer" 
@@ -388,6 +419,163 @@ const ResultRenderer = ({ type, result }) => {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'exploit') {
+    return (
+      <div className="space-y-6">
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 bg-gray-500/5 border border-gray-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Target className="text-gray-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Attempted</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.summary?.attempted || 0}</div>
+          </div>
+          <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Zap className="text-rose-500" size={18} />
+              <span className="text-xs font-bold text-rose-500 uppercase tracking-widest">Successful</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.summary?.success || 0}</div>
+          </div>
+          <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Shield className="text-emerald-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Defended</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.summary?.failed || 0}</div>
+          </div>
+        </div>
+
+        {/* Results Table */}
+        <div className="overflow-hidden border border-[var(--border)] rounded-xl bg-[var(--bg-d)]">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-[#1a1b2e] border-b border-[var(--border)] text-gray-400 font-bold">
+              <tr>
+                <th className="px-4 py-3">Exploit Module</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Access Level</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {(result.successful_exploits?.concat(result.failed_exploits || []) || []).map((exp, i) => (
+                <tr key={i} className="hover:bg-white/5 transition-colors">
+                  <td className="px-4 py-4 font-mono text-xs text-gray-300">{exp.name}</td>
+                  <td className="px-4 py-4">
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                      exp.status?.includes('Success') ? 'bg-rose-500/20 text-rose-400' : 'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      {exp.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4 text-xs">
+                    <span className={exp.access !== 'None' ? 'text-emerald-400 font-bold' : 'text-gray-600'}>
+                      {exp.access}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(!result.successful_exploits && !result.failed_exploits) && (
+            <div className="p-8 text-center text-gray-600 text-sm italic">No exploitation data available.</div>
+          )}
+        </div>
+
+        <div className="p-4 bg-amber-500/5 border border-amber-500/20 rounded-lg">
+          <p className="text-xs text-amber-400/80 leading-relaxed italic flex items-center gap-2">
+             <AlertTriangle size={14} /> Note: This scan uses "safe check" logic. No payloads were actually deployed to the target.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'traffic') {
+    return (
+      <div className="space-y-6">
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Activity className="text-indigo-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Total Packets</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.total_packets || 0}</div>
+          </div>
+          <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <AlertTriangle className="text-rose-500" size={18} />
+              <span className="text-xs font-bold text-rose-500 uppercase tracking-widest">Insecure</span>
+            </div>
+            <div className="text-2xl font-black text-white">{result.insecure_packets || 0}</div>
+          </div>
+          <div className="p-4 bg-cyan-500/5 border border-cyan-500/10 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <Globe className="text-cyan-400" size={18} />
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Protocols</span>
+            </div>
+            <div className="text-2xl font-black text-white">{Object.keys(result.protocols || {}).length}</div>
+          </div>
+        </div>
+
+        {/* Connections Table */}
+        <div className="overflow-hidden border border-[var(--border)] rounded-xl bg-[var(--bg-d)]">
+          <div className="p-4 border-b border-[var(--border)] bg-[#1a1b2e] flex items-center justify-between">
+            <h4 className="text-gray-300 font-bold text-sm flex items-center gap-2">
+              <ArrowLeftRight size={16} /> Connection Flows
+            </h4>
+            <div className="flex gap-2">
+              {Object.entries(result.protocols || {}).map(([proto, count]) => (
+                <span key={proto} className="px-2 py-0.5 bg-gray-800 border border-[var(--border)] rounded text-[10px] text-gray-400">
+                  {proto}: {count}
+                </span>
+              ))}
+            </div>
+          </div>
+          <table className="w-full text-left text-sm">
+            <thead className="bg-[#0d0e1b] border-b border-[var(--border)] text-gray-500 text-xs uppercase tracking-tighter">
+              <tr>
+                <th className="px-4 py-3">Source IP</th>
+                <th className="px-4 py-3">Destination IP</th>
+                <th className="px-4 py-3">Protocol</th>
+                <th className="px-4 py-3">Risk</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {(result.connections || []).map((conn, i) => (
+                <tr key={i} className="hover:bg-white/5 transition-colors">
+                  <td className="px-4 py-3 text-gray-400 font-mono text-xs">{conn.src_ip}</td>
+                  <td className="px-4 py-3 text-gray-400 font-mono text-xs">{conn.dest_ip}</td>
+                  <td className="px-4 py-3">
+                    <span className="text-white font-bold">{conn.protocol}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      conn.risk === 'high' ? 'bg-rose-500 text-white' : 'bg-emerald-500/20 text-emerald-400'
+                    }`}>
+                      {conn.risk.toUpperCase()}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(!result.connections || result.connections.length === 0) && (
+            <div className="p-8 text-center text-gray-600 text-sm italic">No traffic data captured.</div>
+          )}
+        </div>
+
+        <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-lg flex items-start gap-3">
+           <Activity className="text-indigo-400 mt-0.5" size={16} />
+           <p className="text-xs text-indigo-400/80 leading-relaxed">
+             Real-time traffic capture complete. This scan analyzed a burst of 100 packets across active interfaces to identify unencrypted communication channels.
+           </p>
         </div>
       </div>
     );

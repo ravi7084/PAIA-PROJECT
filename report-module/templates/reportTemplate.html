@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Penetration Testing Report - <%= data.reportId %></title>
+    <style>
+        :root {
+            --primary: #1e293b;
+            --secondary: #64748b;
+            --danger: #dc2626;
+            --warning: #ca8a04;
+            --success: #16a34a;
+            --bg: #f8fafc;
+        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: var(--primary); background: var(--bg); margin: 0; padding: 0; }
+        .container { max-width: 1000px; margin: 40px auto; background: white; padding: 60px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+        header { border-bottom: 4px solid var(--primary); margin-bottom: 40px; padding-bottom: 20px; }
+        h1 { margin: 0; font-size: 32px; text-transform: uppercase; letter-spacing: 2px; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 4px; color: white; font-weight: bold; font-size: 12px; text-transform: uppercase; }
+        
+        section { margin-bottom: 50px; }
+        h2 { border-left: 5px solid var(--primary); padding-left: 15px; text-transform: uppercase; font-size: 20px; margin-bottom: 25px; }
+        
+        .summary-grid { display: grid; grid-template-cols: repeat(4, 1fr); gap: 20px; margin-bottom: 30px; }
+        .summary-card { padding: 20px; text-align: center; border: 1px solid #e2e8f0; border-radius: 8px; }
+        .summary-card.critical { border-top: 5px solid #dc2626; }
+        .summary-card.high { border-top: 5px solid #ea580c; }
+        .summary-card.medium { border-top: 5px solid #ca8a04; }
+        .summary-card.low { border-top: 5px solid #16a34a; }
+        .summary-card h3 { margin: 0; font-size: 28px; }
+        .summary-card p { margin: 5px 0 0; font-size: 12px; color: var(--secondary); font-weight: bold; }
+
+        .finding { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 30px; overflow: hidden; }
+        .finding-header { background: #f1f5f9; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .finding-content { padding: 25px; }
+        .finding-meta { display: grid; grid-template-cols: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; font-size: 13px; }
+        .finding-meta div { padding: 10px; background: #f8fafc; border-radius: 4px; }
+        .finding-meta b { display: block; margin-bottom: 5px; color: var(--secondary); text-transform: uppercase; font-size: 10px; }
+
+        pre { background: #0f172a; color: #38bdf8; padding: 20px; border-radius: 8px; font-size: 12px; overflow-x: auto; }
+        
+        footer { margin-top: 100px; text-align: center; font-size: 12px; color: var(--secondary); border-top: 1px solid #e2e8f0; padding-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Penetration Testing Security Report</h1>
+            <p>Target: <b><%= data.target %></b> | Date: <b><%= new Date(data.timestamp).toLocaleDateString() %></b></p>
+            <p>Report ID: <code><%= data.reportId %></code></p>
+        </header>
+
+        <section id="executive-summary">
+            <h2>1. Executive Summary</h2>
+            <p>This report outlines the findings of a security assessment conducted on the target system. The overall risk posture is currently categorized as <b style="color:red"><%= data.summary.overallRisk %></b>.</p>
+            
+            <div class="summary-grid">
+                <div class="summary-card critical"><h3><%= data.summary.critical %></h3><p>Critical</p></div>
+                <div class="summary-card high"><h3><%= data.summary.high %></h3><p>High</p></div>
+                <div class="summary-card medium"><h3><%= data.summary.medium %></h3><p>Medium</p></div>
+                <div class="summary-card low"><h3><%= data.summary.low %></h3><p>Low</p></div>
+            </div>
+
+            <p><b>Management Note:</b> The assessment identified <%= data.summary.total %> vulnerabilities. Immediate attention is required for <%= data.summary.critical %> critical issues that could lead to full system compromise.</p>
+        </section>
+
+        <section id="scope">
+            <h2>2. Scope & Methodology</h2>
+            <p>The assessment utilized an automated and manual approach following industry best practices (OWASP, PTES). Multiple phases were conducted: reconnaissance, vulnerability scanning, and exploitation analysis.</p>
+            <p><b>Tools Employed:</b> Nmap, Nikto, Metasploit, NVD Analysis engine.</p>
+        </section>
+
+        <section id="findings">
+            <h2>3. Vulnerability Findings</h2>
+            <% data.vulnerabilities.forEach(vuln => { %>
+                <div class="finding">
+                    <div class="finding-header">
+                        <span style="font-weight: bold;"><%= vuln.cveId %> - <%= vuln.title %></span>
+                        <span class="badge" style="background: <%= vuln.severityColor %>"><%= vuln.severity %></span>
+                    </div>
+                    <div class="finding-content">
+                        <div class="finding-meta">
+                            <div><b>CVSS Score</b><%= vuln.cvssScore %></div>
+                            <div><b>Risk Priority</b><%= vuln.priority %></div>
+                            <div><b>Involved Assets</b><%= vuln.affectedAssets.join(', ') %></div>
+                        </div>
+                        <p><b>Description:</b><br><%= vuln.description %></p>
+                        <p><b>Business Impact:</b><br><%= vuln.impact %></p>
+                        <p><b>Recommendation:</b><br><%= vuln.recommendation %></p>
+                    </div>
+                </div>
+            <% }); %>
+        </section>
+
+        <section id="technical-logs">
+            <h2>4. Technical Logs</h2>
+            <p>Below are the raw technical logs captured during the scanning phase.</p>
+            <pre><%= data.rawLogs %></pre>
+        </section>
+
+        <footer>
+            <p>&copy; <%= new Date().getFullYear() %> Penetration Testing Dashboard | Confidential Security Asset</p>
+        </footer>
+    </div>
+</body>
+</html>
