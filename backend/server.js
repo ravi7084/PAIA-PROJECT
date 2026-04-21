@@ -5,7 +5,14 @@
  * ╚══════════════════════════════════════════════╝
  */
 
-require('dotenv').config();
+const path = require('path');
+const envPath = path.join(__dirname, '.env');
+const result = require('dotenv').config({ path: envPath });
+console.log('--- DEBUG: Dotenv Load ---');
+console.log('Env Path:', envPath);
+if (result.error) console.log('Wait Dotenv Error:', result.error);
+console.log('MONGO_URI loaded:', !!process.env.MONGO_URI);
+console.log('--------------------------');
 
 const http = require('http');
 const { Server } = require('socket.io');
