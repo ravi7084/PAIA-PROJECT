@@ -17,7 +17,7 @@ const path = require('path');
  * @returns {Promise<string>} - Resolution with stdout.
  */
 const runExecutable = (cmd, args, options = {}) => {
-  const { timeout: timeoutMs = 5 * 60 * 1000, stopCondition = null } = options;
+  const { timeout: timeoutMs = 5 * 60 * 1000, stopCondition = null, onData = null } = options;
 
   return new Promise((resolve, reject) => {
     logger.info(`Spawning: ${cmd} ${args.join(' ')}`);
@@ -42,6 +42,7 @@ const runExecutable = (cmd, args, options = {}) => {
 
     child.stdout.on('data', (data) => { 
       stdout += data; 
+      if (onData) onData(data.toString());
       // Check stop condition in real-time
       if (stopCondition && stopCondition(stdout)) {
         logger.info(`Stop condition met for ${cmd}. Killing process early.`);

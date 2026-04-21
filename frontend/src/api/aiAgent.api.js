@@ -55,8 +55,8 @@ export const deleteReport = async (reportId) => {
   return res.data;
 };
 
-export const downloadReportPdf = async (reportId) => {
-  const res = await api.get(`/reports/${reportId}/download`, { responseType: 'blob' });
+export const downloadReportPdf = async (scanId) => {
+  const res = await api.get(`/ai-agent/${scanId}/pdf`, { responseType: 'blob' });
   const url = window.URL.createObjectURL(new Blob([res.data]));
   const link = document.createElement('a');
   link.href = url;

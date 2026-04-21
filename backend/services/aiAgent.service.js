@@ -75,10 +75,10 @@ const httpGet = (url, timeoutMs) => {
 };
 
 /* ── Spawn CLI tool with timeout (modified for Kali integration) ── */
-const spawnTool = async (bin, args, timeoutMs) => {
+const spawnTool = async (bin, args, timeoutMs, onData) => {
   try {
     const { runRemoteExecutable } = require('../utils/commandRunner');
-    const stdout = await runRemoteExecutable(bin, args, { timeout: timeoutMs || 180000 });
+    const stdout = await runRemoteExecutable(bin, args, { timeout: timeoutMs || 180000, onData });
     return { installed: true, stdout: stdout, stderr: '', exitCode: 0, timedOut: false };
   } catch (err) {
     const errorMsg = err.message || '';
@@ -187,499 +187,169 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
       });
     }
 
-
     /* ═══════════════════════════════════════════
-       PHASE 2 — Subdomain Enumeration via crt.sh (20% → 32%)
+       PHASE 4 — Network Recon (NMAP) (25% → 40%)
        ═══════════════════════════════════════════ */
-    var subdomains = [];
-    try {
-      var skipSubdomains = isIP(cleanTarget);
-      if (skipSubdomains) {
-        logger.info('Phase 2: Skipping crt.sh — target is an IP address');
-        await updateProgress(scanId, 'subdomain_enum', 32, 'Subdomain enum skipped (IP target)');
-      } else {
-        await updateProgress(scanId, 'subdomain_enum', 20, 'Enumerating subdomains via crt.sh...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_enum', status: 'running' });
+    var nmapResults = { openPorts: [] };
+    var scanTargets = [cleanTarget]; // Default to single target
 
-        logger.info('Phase 2: crt.sh subdomain enumeration — domain=' + cleanTarget);
-        var crtUrl = 'https://crt.sh/?q=%25.' + encodeURIComponent(cleanTarget) + '&output=json';
-        var crtBody = await httpGet(crtUrl, 30000);
-        var crtData = JSON.parse(crtBody);
-
-        // Deduplicate and filter wildcards
-        var subdomainSet = {};
-        if (Array.isArray(crtData)) {
-          for (var ci = 0; ci < crtData.length; ci++) {
-            var nameValue = crtData[ci].name_value || '';
-            var names = nameValue.split('\n');
-            for (var ni = 0; ni < names.length; ni++) {
-              var sub = names[ni].trim().toLowerCase();
-              // Filter out wildcards and empty
-              if (sub && sub.indexOf('*') === -1 && sub.length > 0) {
-                subdomainSet[sub] = true;
-              }
-            }
-          }
-        }
-        subdomains = Object.keys(subdomainSet).sort();
-
-        completedScans.push({
-          tool: 'crt_sh',
-          status: 'success',
-          data: { subdomainCount: subdomains.length, subdomains: subdomains.slice(0, 100) },
-        });
-        usedTools.push('crt_sh');
-
-        await ScanSession.findByIdAndUpdate(scanId, {
-          $push: {
-            phases: {
-              name: 'subdomain',
-              status: 'completed',
-              tools: ['crt_sh'],
-              results: { count: subdomains.length, sample: subdomains.slice(0, 20) },
-              startedAt: new Date(),
-              finishedAt: new Date(),
-            },
-          },
-        });
-
-        emit(io, scanId, 'ai:tool_complete', { tool: 'crt_sh', status: 'success' });
-        await updateProgress(scanId, 'subdomain_enum', 32, 'Found ' + subdomains.length + ' subdomains');
-        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_enum', status: 'completed' });
-
-        logger.info('Phase 2 completed: ' + subdomains.length + ' subdomains found');
-      }
-    } catch (err) {
-      logger.warn('Phase 2 (crt.sh) failed: ' + err.message);
-      await updateProgress(scanId, 'subdomain_enum', 32, 'Subdomain enumeration failed, continuing...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_enum', status: 'failed' });
-
-      await ScanSession.findByIdAndUpdate(scanId, {
-        $push: {
-          phases: {
-            name: 'subdomain',
-            status: 'failed',
-            tools: ['crt_sh'],
-            results: { error: err.message },
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          },
-        },
-      });
-    }
-
-
-    /* ═══════════════════════════════════════════
-       PHASE 2.5 — Target Preparation
-       ═══════════════════════════════════════════ */
-    var scanTargets = [cleanTarget];
-    if (subdomains && subdomains.length > 0) {
-      var additional = subdomains.filter(s => s !== cleanTarget).slice(0, 3);
-      for (var i = 0; i < additional.length; i++) scanTargets.push(additional[i]);
-    }
-
-
-    /* ═══════════════════════════════════════════
-       PHASE 3 — DNS Records via Node.js dns.promises (34% → 42%)
-       ═══════════════════════════════════════════ */
-    var dnsResults = {};
-    try {
-      var skipDNS = isIP(cleanTarget);
-      if (skipDNS) {
-        // Reverse DNS for IP
-        await updateProgress(scanId, 'dns_resolution', 34, 'Performing reverse DNS lookup...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'running' });
-
-        try {
-          var reverseNames = await dns.reverse(cleanTarget);
-          dnsResults = { reverse: reverseNames, ip: cleanTarget };
-        } catch (e) {
-          dnsResults = { reverse: [], ip: cleanTarget, error: e.message };
-        }
-      } else {
-        await updateProgress(scanId, 'dns_resolution', 34, 'Resolving DNS records...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'running' });
-
-        logger.info('Phase 3: DNS resolution — domain=' + cleanTarget);
-
-        var dnsQueries = [
-          { type: 'A', fn: dns.resolve4(cleanTarget).catch(function () { return []; }) },
-          { type: 'AAAA', fn: dns.resolve6(cleanTarget).catch(function () { return []; }) },
-          { type: 'MX', fn: dns.resolveMx(cleanTarget).catch(function () { return []; }) },
-          { type: 'NS', fn: dns.resolveNs(cleanTarget).catch(function () { return []; }) },
-          { type: 'TXT', fn: dns.resolveTxt(cleanTarget).catch(function () { return []; }) },
-          { type: 'CNAME', fn: dns.resolveCname(cleanTarget).catch(function () { return []; }) },
-        ];
-
-        var dnsSettled = await Promise.allSettled(dnsQueries.map(function (q) { return q.fn; }));
-
-        for (var di = 0; di < dnsQueries.length; di++) {
-          var result = dnsSettled[di];
-          if (result.status === 'fulfilled') {
-            dnsResults[dnsQueries[di].type] = result.value;
-          } else {
-            dnsResults[dnsQueries[di].type] = [];
-          }
-        }
-      }
-
-      completedScans.push({ tool: 'dns_resolver', status: 'success', data: dnsResults });
-      usedTools.push('dns_resolver');
-
-      await ScanSession.findByIdAndUpdate(scanId, {
-        $push: {
-          phases: {
-            name: 'recon',
-            status: 'completed',
-            tools: ['dns_resolver'],
-            results: dnsResults,
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          },
-        },
-      });
-
-      emit(io, scanId, 'ai:tool_complete', { tool: 'dns_resolver', status: 'success' });
-      await updateProgress(scanId, 'dns_resolution', 42, 'DNS resolution complete');
-      emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'completed' });
-
-      logger.info('Phase 3 completed: DNS records resolved');
-    } catch (err) {
-      logger.warn('Phase 3 (DNS) failed: ' + err.message);
-      await updateProgress(scanId, 'dns_resolution', 42, 'DNS resolution failed, continuing...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'dns_resolution', status: 'failed' });
-
-      await ScanSession.findByIdAndUpdate(scanId, {
-        $push: {
-          phases: {
-            name: 'recon',
-            status: 'failed',
-            tools: ['dns_resolver'],
-            results: { error: err.message },
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          },
-        },
-      });
-    }
-
-
-    /* ═══════════════════════════════════════════
-       PHASE 4 — Nmap Port Scan (44% → 55%)
-       ═══════════════════════════════════════════ */
-    var nmapResults = { openPorts: [], raw: '' };
-    try {
-      await updateProgress(scanId, 'nmap_scan', 44, 'Running Nmap port scan on ' + scanTargets.length + ' targets...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'running' });
-      emit(io, scanId, 'ai:tool_running', { tool: 'nmap' });
-
-      var nmapBin = process.env.NMAP_BIN || 'nmap';
-      var allOpenPorts = [];
-      var nmapRawCombined = '';
-      var nmapInstalled = true;
-
-      for (var ti = 0; ti < scanTargets.length; ti++) {
-        var currentTarget = scanTargets[ti];
-        var nmapTarget = currentTarget;
-        if (currentTarget === cleanTarget && !isIP(cleanTarget) && dnsResults.A && dnsResults.A.length > 0) {
-          nmapTarget = dnsResults.A[0];
-        }
-
-        logger.info('Phase 4: Nmap scan — target=' + nmapTarget + ' bin=' + nmapBin);
-        var nmapOutput = await spawnTool(nmapBin, ['-sV', '-Pn', '--top-ports', '1000', nmapTarget], 180000);
-
+    if (scope === 'recon-only' || scope === 'web') {
+      logger.info(`Phase 4: Skipping Nmap — scope is ${scope}`);
+      await updateProgress(scanId, 'network_scan', 40, `Nmap skipped (Scope: ${scope})`);
+    } else {
+      try {
+        await updateProgress(scanId, 'network_scan', 25, 'Running Network Scan (Nmap)...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'network_scan', status: 'running' });
+        emit(io, scanId, 'ai:tool_running', { tool: 'nmap' });
+        
+        var nmapBin = process.env.NMAP_BIN || 'nmap';
+        
+        // Setup raw streaming into frontend!
+        var nmapStdoutRaw = '';
+        var onNmapData = (dataChunk) => {
+          nmapStdoutRaw += dataChunk;
+          emit(io, scanId, 'ai:terminal_log', { tool: 'nmap', text: dataChunk });
+        };
+        
+        var nmapOutput = await spawnTool(nmapBin, ['-F', '-sV', cleanTarget], 300000, onNmapData);
+        
         if (!nmapOutput.installed) {
-          nmapInstalled = false;
-          logger.warn('Nmap not installed — fallback Built-in Port Scanner for: ' + nmapTarget);
-          const portScanResult = await builtinScanner.scanPorts(nmapTarget);
-          nmapRawCombined += `\n[${nmapTarget}] Built-in Scan: ` + JSON.stringify(portScanResult.openPorts || []);
-          if (portScanResult.openPorts) {
-             allOpenPorts.push(...portScanResult.openPorts);
-          }
+          logger.warn('Nmap not installed — skipping network scan');
+          completedScans.push({ tool: 'nmap', status: 'skipped', data: {} });
         } else {
-          var nmapLines = nmapOutput.stdout.split('\n');
-          var portRegex = /^(\d+)\/(tcp|udp)\s+open\s+(\S+)\s*(.*)?$/;
-          for (var pi = 0; pi < nmapLines.length; pi++) {
-            var match = nmapLines[pi].trim().match(portRegex);
-            if (match) {
-              allOpenPorts.push({
-                target: nmapTarget,
-                port: parseInt(match[1], 10),
-                protocol: match[2],
-                service: match[3],
-                version: (match[4] || '').trim(),
+          // Parse open ports
+          var lines = (nmapOutput.stdout || '').split('\n');
+          for (var i = 0; i < lines.length; i++) {
+            var l = lines[i];
+            if (l.includes('/tcp') && l.includes('open')) {
+              var parts = l.trim().split(/\s+/);
+              nmapResults.openPorts.push({
+                port: parseInt(parts[0].split('/')[0], 10),
+                protocol: 'tcp',
+                service: parts[2] || 'unknown',
+                version: parts.slice(3).join(' ') || ''
               });
             }
           }
-          nmapRawCombined += `\n[${nmapTarget}]:\n` + nmapOutput.stdout.slice(0, 1000);
+          completedScans.push({ tool: 'nmap', status: 'success', data: { openPorts: nmapResults.openPorts } });
+          usedTools.push('nmap');
         }
+        
+        emit(io, scanId, 'ai:tool_complete', { tool: 'nmap', status: 'success' });
+        await updateProgress(scanId, 'network_scan', 40, 'Nmap scan complete');
+        emit(io, scanId, 'ai:phase_update', { phase: 'network_scan', status: 'completed' });
+      } catch (err) {
+        logger.warn('Phase 4 (Nmap) failed: ' + err.message);
+        await updateProgress(scanId, 'network_scan', 40, 'Nmap failed, continuing');
+        emit(io, scanId, 'ai:phase_update', { phase: 'network_scan', status: 'failed' });
       }
-
-      nmapResults = {
-        installed: nmapInstalled,
-        openPorts: allOpenPorts,
-        portCount: allOpenPorts.length,
-        raw: nmapRawCombined.slice(0, 3000),
-      };
-
-      var toolName = nmapInstalled ? 'nmap' : 'nmap_fallback';
-      usedTools.push(nmapInstalled ? 'nmap' : 'builtin_port_scanner');
-      completedScans.push({ tool: toolName, status: 'success', data: nmapResults });
-
-      await ScanSession.findByIdAndUpdate(scanId, {
-        $push: {
-          phases: {
-            name: 'network',
-            status: 'completed',
-            tools: [toolName],
-            results: { openPorts: allOpenPorts.length, ports: allOpenPorts.slice(0, 20) },
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          },
-        },
-      });
-
-      logger.info('Phase 4 completed: ' + allOpenPorts.length + ' open ports found across targets');
-      emit(io, scanId, 'ai:tool_complete', { tool: 'nmap', status: 'success' });
-      await updateProgress(scanId, 'nmap_scan', 55, (nmapInstalled ? 'Nmap' : 'Built-in Port Scan') + ' complete — ' + allOpenPorts.length + ' ports open');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'completed' });
-    } catch (err) {
-      logger.warn('Phase 4 (Nmap) failed: ' + err.message);
-      await updateProgress(scanId, 'nmap_scan', 55, 'Nmap scan failed, continuing...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nmap_scan', status: 'failed' });
-
-      await ScanSession.findByIdAndUpdate(scanId, {
-        $push: {
-          phases: {
-            name: 'network',
-            status: 'failed',
-            tools: ['nmap'],
-            results: { error: err.message },
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          },
-        },
-      });
     }
 
 
     /* ═══════════════════════════════════════════
-       PHASE 4.5 — Built-in Security Scan (55% → 60%)
+       PHASE 5 — Web Vulnerability (Nikto) (40% → 60%)
        ═══════════════════════════════════════════ */
-    try {
-      await updateProgress(scanId, 'builtin_scan', 55, 'Running Built-in Security Scans...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'builtin_scan', status: 'running' });
-
-      var builtinAllResults = [];
-      for (var ti = 0; ti < scanTargets.length; ti++) {
-        var currentTarget = scanTargets[ti];
-        logger.info('Phase 4.5: Built-in scans — target=' + currentTarget);
-        
-        const techResult = await builtinScanner.detectTechnology(currentTarget);
-        const robotsResult = await builtinScanner.checkRobotsSitemap(currentTarget);
-        
-        builtinAllResults.push({ target: currentTarget, technology: techResult, robotsSitemap: robotsResult });
-        
-        if (techResult && techResult.findings) allVulnerabilities.push(...techResult.findings);
-        if (robotsResult && robotsResult.findings) allVulnerabilities.push(...robotsResult.findings);
-      }
-      
-      completedScans.push({ tool: 'builtin_security', status: 'success', data: builtinAllResults });
-      usedTools.push('builtin_security');
-
-      await updateProgress(scanId, 'builtin_scan', 60, 'Built-in scans complete');
-      emit(io, scanId, 'ai:phase_update', { phase: 'builtin_scan', status: 'completed' });
-    } catch (err) {
-      logger.warn('Phase 4.5 (Built-in) failed: ' + err.message);
-    }
-
-
-    /* ═══════════════════════════════════════════
-       PHASE 5 — Nikto Web Scan (60% → 70%)
-       ═══════════════════════════════════════════ */
-    var niktoResults = { findings: [], raw: '' };
-    try {
-      var webPorts = [80, 443, 8080, 8443, 8000, 8888, 3000];
-      var hasWebPort = false;
-      var nmapOpenPorts = (nmapResults && nmapResults.openPorts) || [];
-      for (var wp = 0; wp < nmapOpenPorts.length; wp++) {
-        if (webPorts.indexOf(nmapOpenPorts[wp].port) !== -1) {
-          hasWebPort = true;
-          break;
-        }
-      }
-
-      var shouldRunNikto = (scope !== 'network') && (hasWebPort || scope === 'web' || nmapResults.installed === false);
-
-      if (!shouldRunNikto) {
-        logger.info('Phase 5: Skipping Nikto — no web ports detected and scope is not web');
-        await updateProgress(scanId, 'nikto_scan', 70, 'Nikto skipped (no web ports or network-only scope)');
-
-        completedScans.push({ tool: 'nikto', status: 'skipped', data: { reason: 'No web ports detected' } });
-        usedTools.push('nikto');
-
-        await ScanSession.findByIdAndUpdate(scanId, {
-          $push: {
-            phases: {
-              name: 'webapp',
-              status: 'skipped',
-              tools: ['nikto'],
-              results: { reason: 'No web ports detected' },
-              startedAt: new Date(),
-              finishedAt: new Date(),
-            },
-          },
-        });
-      } else {
-        await updateProgress(scanId, 'nikto_scan', 62, 'Running Nikto web vulnerability scan on ' + scanTargets.length + ' targets...');
+    if (scope === 'recon-only' || scope === 'network') {
+      logger.info(`Phase 5: Skipping Nikto — scope is ${scope}`);
+      await updateProgress(scanId, 'nikto_scan', 60, `Nikto skipped (Scope: ${scope})`);
+    } else {
+      try {
+        await updateProgress(scanId, 'nikto_scan', 40, 'Running Web Vulnerability Scan (Nikto)...');
         emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'running' });
         emit(io, scanId, 'ai:tool_running', { tool: 'nikto' });
-
+        
         var niktoBin = process.env.NIKTO_BIN || 'nikto';
-        var allNiktoFindings = [];
-        var niktoRawCombined = '';
-        var niktoInstalled = true;
-
-        for (var ti = 0; ti < scanTargets.length; ti++) {
-          var currentTarget = scanTargets[ti];
-          var niktoTarget = 'http://' + currentTarget;
-          logger.info('Phase 5: Nikto scan — target=' + niktoTarget + ' bin=' + niktoBin);
-
-          var niktoOutput = await spawnTool(niktoBin, ['-h', niktoTarget, '-nointeractive'], 180000);
-
-          if (!niktoOutput.installed) {
-            niktoInstalled = false;
-            logger.warn('Nikto not installed — fallback Built-in Web Scanner for: ' + currentTarget);
-            
-            const headersResult = await builtinScanner.checkSecurityHeaders(currentTarget);
-            const sslResult = await builtinScanner.checkSSL(currentTarget);
-            
-            if (headersResult && headersResult.findings) allVulnerabilities.push(...headersResult.findings);
-            if (sslResult && sslResult.findings) allVulnerabilities.push(...sslResult.findings);
-            
-            const fw_findings = [...(headersResult.findings || []), ...(sslResult.findings || [])].map(f => `[${currentTarget}] ` + f.title + ': ' + f.description);
-            allNiktoFindings.push(...fw_findings);
-            niktoRawCombined += `\n[${currentTarget}] Built-in Web Scan completed.`;
-          } else {
-            var niktoLines = niktoOutput.stdout.split('\n');
-            for (var nk = 0; nk < niktoLines.length; nk++) {
-              var line = niktoLines[nk].trim();
-              if (line.indexOf('+ ') === 0 && line.length > 10) {
-                var finding = line.substring(2).trim();
-                if (finding.indexOf('Target IP:') === -1 &&
-                    finding.indexOf('Target Hostname:') === -1 &&
-                    finding.indexOf('Target Port:') === -1 &&
-                    finding.indexOf('Start Time:') === -1 &&
-                    finding.indexOf('End Time:') === -1 &&
-                    finding.indexOf('host(s) tested') === -1) {
-                  allNiktoFindings.push(`[${currentTarget}] ` + finding);
-                }
-              }
+        var niktoFindings = [];
+        
+        var niktoStdoutRaw = '';
+        var onNiktoData = (dataChunk) => {
+          niktoStdoutRaw += dataChunk;
+          emit(io, scanId, 'ai:terminal_log', { tool: 'nikto', text: dataChunk });
+        };
+        
+        // Using -nointeractive ensures it doesn't get stuck
+        var niktoOutput = await spawnTool(niktoBin, ['-h', 'http://' + cleanTarget, '-nointeractive'], 600000, onNiktoData);
+        
+        if (!niktoOutput.installed) {
+          logger.warn('Nikto not installed');
+        } else {
+          var nLines = (niktoOutput.stdout || '').split('\n');
+          for (var nk = 0; nk < nLines.length; nk++) {
+            var nLine = nLines[nk].trim();
+            if (nLine.indexOf('+ ') === 0 && nLine.length > 10) {
+               var finding = nLine.substring(2).trim();
+               if (!finding.includes('Target IP:') && !finding.includes('host(s) tested')) {
+                  niktoFindings.push(finding);
+               }
             }
-            niktoRawCombined += `\n[${currentTarget}]:\n` + niktoOutput.stdout.slice(0, 1000);
           }
+          completedScans.push({ tool: 'nikto', status: 'success', data: { findingCount: niktoFindings.length, findings: niktoFindings.slice(0, 15) } });
+          usedTools.push('nikto');
         }
 
-        niktoResults = {
-          installed: niktoInstalled,
-          findings: allNiktoFindings,
-          findingCount: allNiktoFindings.length,
-          raw: niktoRawCombined.slice(0, 3000)
-        };
-
-        var ntoolName = niktoInstalled ? 'nikto' : 'nikto_fallback';
-        usedTools.push(niktoInstalled ? 'nikto' : 'builtin_web_scanner');
-        completedScans.push({ tool: ntoolName, status: 'success', data: niktoResults });
-
-        await ScanSession.findByIdAndUpdate(scanId, {
-          $push: {
-            phases: {
-              name: 'webapp',
-              status: 'completed',
-              tools: [ntoolName],
-              results: { findingCount: allNiktoFindings.length, findings: allNiktoFindings.slice(0, 20) },
-              startedAt: new Date(),
-              finishedAt: new Date(),
-            },
-          },
-        });
-
-        logger.info('Phase 5 completed: ' + allNiktoFindings.length + ' Nikto findings across targets');
         emit(io, scanId, 'ai:tool_complete', { tool: 'nikto', status: 'success' });
-        await updateProgress(scanId, 'nikto_scan', 70, (niktoInstalled ? 'Nikto' : 'Built-in Web Scan') + ' complete — ' + allNiktoFindings.length + ' findings');
+        await updateProgress(scanId, 'nikto_scan', 60, 'Nikto scan complete');
         emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'completed' });
+      } catch (err) {
+        logger.warn('Phase 5 (Nikto) failed: ' + err.message);
+        await updateProgress(scanId, 'nikto_scan', 60, 'Nikto failed, continuing');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'failed' });
       }
-    } catch (err) {
-      logger.warn('Phase 5 (Nikto) failed: ' + err.message);
-      await updateProgress(scanId, 'nikto_scan', 70, 'Nikto scan failed, continuing...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'failed' });
-
-      await ScanSession.findByIdAndUpdate(scanId, {
-        $push: {
-          phases: {
-            name: 'webapp',
-            status: 'failed',
-            tools: ['nikto'],
-            results: { error: err.message },
-            startedAt: new Date(),
-            finishedAt: new Date(),
-          },
-        },
-      });
     }
 
     /* ═══════════════════════════════════════════
        PHASE 6 — NVD + Vulners Enrichment (62% → 72%)
        ═══════════════════════════════════════════ */
     var nvdEnrichmentData = [];
-    try {
-      await updateProgress(scanId, 'nvd_enrichment', 62, 'Enriching findings with NVD + Vulners data...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'running' });
-      emit(io, scanId, 'ai:tool_running', { tool: 'nvd_vulners' });
-
-      logger.info('Phase 6: NVD/Vulners enrichment — searching for real-world CVE data');
-
-      // Search NVD for services found in scan results
-      var serviceKeywords = [];
-      var nmapOpenPorts2 = (nmapResults && nmapResults.openPorts) || [];
-      for (var sk = 0; sk < nmapOpenPorts2.length; sk++) {
-        var p2 = nmapOpenPorts2[sk];
-        if (p2.service && p2.version) {
-          serviceKeywords.push(p2.service + ' ' + p2.version);
-        }
-      }
-
-      // Search NVD for each detected service
-      for (var sw = 0; sw < Math.min(serviceKeywords.length, 3); sw++) {
-        try {
-          var nvdResults = await nvdVulners.nvdKeywordSearch(serviceKeywords[sw]);
-          if (nvdResults.length > 0) {
-            nvdEnrichmentData.push({ keyword: serviceKeywords[sw], cves: nvdResults });
-          }
-          await new Promise(function(r) { setTimeout(r, 700); }); // NVD rate limit
-        } catch (e) { logger.warn('NVD search failed for ' + serviceKeywords[sw]); }
-      }
-
-      // Vulners search for the target
+    if (scope === 'recon-only') {
+      logger.info('Phase 6: Skipping NVD Enrichment — scope is recon-only');
+      await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD enrichment skipped (Recon Only)');
+    } else {
       try {
-        var vulnersResults = await nvdVulners.vulnersSearch(cleanTarget);
-        if (vulnersResults.length > 0) {
-          nvdEnrichmentData.push({ source: 'vulners_target', data: vulnersResults });
+        await updateProgress(scanId, 'nvd_enrichment', 62, 'Enriching findings with NVD + Vulners data...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'running' });
+        emit(io, scanId, 'ai:tool_running', { tool: 'nvd_vulners' });
+
+        logger.info('Phase 6: NVD/Vulners enrichment — searching for real-world CVE data');
+
+        var serviceKeywords = [];
+        var nmapOpenPorts2 = (nmapResults && nmapResults.openPorts) || [];
+        for (var sk = 0; sk < nmapOpenPorts2.length; sk++) {
+          var p2 = nmapOpenPorts2[sk];
+          if (p2.service && p2.version) {
+            serviceKeywords.push(p2.service + ' ' + p2.version);
+          }
         }
-      } catch (e) { logger.warn('Vulners search failed: ' + e.message); }
 
-      completedScans.push({ tool: 'nvd_vulners', status: 'success', data: { enrichmentCount: nvdEnrichmentData.length } });
-      usedTools.push('nvd_vulners');
+        for (var sw = 0; sw < Math.min(serviceKeywords.length, 3); sw++) {
+          try {
+            var nvdResults = await nvdVulners.nvdKeywordSearch(serviceKeywords[sw]);
+            if (nvdResults.length > 0) {
+              nvdEnrichmentData.push({ keyword: serviceKeywords[sw], cves: nvdResults });
+            }
+            await new Promise(function(r) { setTimeout(r, 700); });
+          } catch (e) { logger.warn('NVD search failed for ' + serviceKeywords[sw]); }
+        }
 
-      emit(io, scanId, 'ai:tool_complete', { tool: 'nvd_vulners', status: 'success' });
-      await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment complete — ' + nvdEnrichmentData.length + ' enrichments');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'completed' });
+        try {
+          var vulnersResults = await nvdVulners.vulnersSearch(cleanTarget);
+          if (vulnersResults.length > 0) {
+            nvdEnrichmentData.push({ source: 'vulners_target', data: vulnersResults });
+          }
+        } catch (e) { logger.warn('Vulners search failed: ' + e.message); }
 
-      logger.info('Phase 6 completed: ' + nvdEnrichmentData.length + ' NVD/Vulners enrichments');
-    } catch (err) {
-      logger.warn('Phase 6 (NVD/Vulners) failed: ' + err.message);
-      await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment failed, continuing...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'failed' });
+        completedScans.push({ tool: 'nvd_vulners', status: 'success', data: { enrichmentCount: nvdEnrichmentData.length } });
+        usedTools.push('nvd_vulners');
+
+        emit(io, scanId, 'ai:tool_complete', { tool: 'nvd_vulners', status: 'success' });
+        await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment complete — ' + nvdEnrichmentData.length + ' enrichments');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'completed' });
+        logger.info('Phase 6 completed: ' + nvdEnrichmentData.length + ' NVD/Vulners enrichments');
+      } catch (err) {
+        logger.warn('Phase 6 (NVD/Vulners) failed: ' + err.message);
+        await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment failed, continuing...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'failed' });
+      }
     }
 
 
@@ -702,7 +372,6 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
         usedTools: usedTools,
       });
 
-      // Extract AI-identified vulnerabilities
       if (aiDecision && Array.isArray(aiDecision.currentFindings)) {
         for (var fi = 0; fi < aiDecision.currentFindings.length; fi++) {
           allVulnerabilities.push(aiDecision.currentFindings[fi]);
@@ -749,19 +418,14 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
 
       logger.info('Phase 8: MITRE ATT&CK mapping + risk calculation — ' + allVulnerabilities.length + ' vulns');
 
-      // Map all vulnerabilities to MITRE ATT&CK
       mitreMapping = mitreAttack.generateAttackChain(allVulnerabilities);
 
-      // Add MITRE mapping to each vulnerability
       for (var mi = 0; mi < allVulnerabilities.length; mi++) {
         var vulnMitre = mitreAttack.mapVulnToAttack(allVulnerabilities[mi]);
         allVulnerabilities[mi].mitreMapping = vulnMitre;
       }
 
-      // Enrich vulnerabilities with NVD data (CVSS, descriptions, exploit check)
       allVulnerabilities = await nvdVulners.enrichVulnerabilities(allVulnerabilities);
-
-      // Calculate real risk score
       riskCalc = nvdVulners.calculateRealRiskScore(cleanTarget, allVulnerabilities, threatIntelResults);
 
       completedScans.push({ tool: 'mitre_mapping', status: 'success', data: { tacticsCount: mitreMapping.chain.length, coverage: mitreMapping.coveragePercent } });
@@ -773,14 +437,17 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
       logger.info('Phase 8 completed: ' + mitreMapping.chain.length + ' ATT&CK tactics, risk=' + riskCalc.score);
     } catch (err) {
       logger.warn('Phase 8 (MITRE/Enrichment) failed: ' + err.message);
+      try {
+        riskCalc = nvdVulners.calculateRealRiskScore(cleanTarget, allVulnerabilities, threatIntelResults);
+        logger.info('Phase 8 fallback risk score: ' + riskCalc.score);
+      } catch (e) { logger.warn('Fallback risk calc also failed: ' + e.message); }
       await updateProgress(scanId, 'mitre_mapping', 88, 'MITRE mapping failed, continuing...');
       emit(io, scanId, 'ai:phase_update', { phase: 'mitre_mapping', status: 'failed' });
     }
 
+      completedScans.push({ tool: 'mitre_mapping', status: 'success', data: { tacticsCount: mitreMapping.chain.length, coverage: mitreMapping.coveragePercent } });
 
-    /* ═══════════════════════════════════════════
-       PHASE 9 — Report Generation (89% → 100%)
-       ═══════════════════════════════════════════ */
+      
     await updateProgress(scanId, 'report_generation', 89, 'Generating penetration test report...');
     emit(io, scanId, 'ai:phase_update', { phase: 'report', status: 'running' });
 

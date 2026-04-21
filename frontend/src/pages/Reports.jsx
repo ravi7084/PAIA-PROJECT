@@ -46,7 +46,9 @@ const Reports = () => {
     if (!selected) return;
     try {
       toast.success('Preparing PDF Document...', { icon: '📄' });
-      await aiApi.downloadReportPdf(selected._id);
+      // Use scanSession_id to download from ScanSession directly
+      const sessionId = selected.scanSession_id || selected._id;
+      await aiApi.downloadReportPdf(sessionId);
     } catch {
       toast.error('Failed to download PDF');
     }

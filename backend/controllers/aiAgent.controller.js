@@ -180,4 +180,53 @@ const deleteScan = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { startAIScan, quickScan, explainScan, getStatus, stopScan, getHistory, deleteScan };
+/**
+ * GET /api/ai-agent/:id/pdf
+ * Download scan results as a professional PDF directly from ScanSession
+ */
+const downloadScanPdf = async (req, res, next) => {
+  try {
+    const session = await ScanSession.findOne({ _id: req.params.id, user_id: req.user.id });
+    if (!session) return res.status(404).json({ success: false, message: 'Scan session not found' });
+    if (session.status !== 'completed') return res.status(400).json({ success: false, message: 'Scan not yet completed' });
+
+    // Build a report-like object from session data for the PDF generator
+    const severityCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    (session.vulnerabilities || []).forEach((v) => {
+      if (severityCounts[v.severity] !== undefined) severityCounts[v.severity]++;
+    });
+
+    const reportData = {
+      _id: session._id,
+      target: session.target,
+      scope: session.scope || 'full',
+      generatedAt: session.finishedAt || session.createdAt,
+      executiveSummary: session.report?.executiveSummary || `Automated penetration test completed for ${session.target}. ${session.vulnerabilities?.length || 0} findings identified.`,
+      methodology: session.report?.technicalDetails || 'Automated AI-driven penetration testing using PAIA with NVD/Vulners enrichment and MITRE ATT&CK mapping',
+      findings: (session.vulnerabilities || []).map((v) => ({
+        title: v.title,
+        severity: v.severity,
+        cvss: v.cvss,
+        description: v.description,
+        evidence: v.evidence,
+        remediation: v.remediation,
+        cveId: v.cveId,
+        tool: v.tool,
+        mitreMapping: v.mitreMapping || [],
+        exploitAvailable: v.exploitAvailable || false,
+      })),
+      riskScore: session.report?.riskScore || 0,
+      severityCounts,
+      recommendations: session.report?.recommendations || [],
+      conclusion: `Scan completed at ${session.finishedAt?.toISOString() || 'N/A'}. ${(session.vulnerabilities || []).length} findings identified.`,
+      mitreAttackSummary: session.report?.mitreAttackSummary || '',
+      mitreAttackMapping: session.report?.mitreAttackMapping || null,
+      riskBreakdown: session.report?.riskBreakdown || null,
+    };
+
+    const { generatePDF } = require('../services/report.service');
+    generatePDF(reportData, res);
+  } catch (err) { next(err); }
+};
+
+module.exports = { startAIScan, quickScan, explainScan, getStatus, stopScan, getHistory, deleteScan, downloadScanPdf };

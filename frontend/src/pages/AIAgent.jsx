@@ -81,9 +81,12 @@ const AIAgent = () => {
   const [explainData, setExplainData] = useState(null);
   const [explainLoading, setExplainLoading] = useState(false);
   const [explainText, setExplainText] = useState('');
+  const [terminalText, setTerminalText] = useState('');
+  
   const socketRef = useRef(null);
   const pollRef = useRef(null);
   const thinkingRef = useRef(null);
+  const terminalRef = useRef(null);
 
   const refreshHistory = async () => {
     try { setHistory(await getAIScanHistory()); } catch { /* */ }
@@ -102,6 +105,12 @@ const AIAgent = () => {
       thinkingRef.current.scrollTop = thinkingRef.current.scrollHeight;
     }
   }, [decisions]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [terminalText]);
 
   const startPolling = (id) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -132,6 +141,9 @@ const AIAgent = () => {
     socket.on('ai:decision', (p) => { setDecisions(prev => [...prev, p.decision]); });
     socket.on('ai:tool_running', (p) => { setLivePhase(`Executing: ${p.tool}`); });
     socket.on('ai:tool_complete', (p) => { setLivePhase(`Completed: ${p.tool}`); });
+    socket.on('ai:terminal_log', (p) => { 
+       setTerminalText(prev => (prev + p.text).slice(-10000)); // Keep last 10k chars to prevent memory leak
+    });
     socket.on('ai:completed', (p) => {
       setLoading(false);
       setLivePhase('✓ Scan Complete');
@@ -145,7 +157,7 @@ const AIAgent = () => {
   const handleStart = async () => {
     const target = targetInput.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
     if (!target) { toast.error('Enter a target domain or IP'); return; }
-    setLoading(true); setSession(null); setDecisions([]); setLivePhase('Queuing...'); setLiveIteration(0); setExplainMode(null); setExplainData(null); setExplainText('');
+    setLoading(true); setSession(null); setDecisions([]); setLivePhase('Queuing...'); setLiveIteration(0); setExplainMode(null); setExplainData(null); setExplainText(''); setTerminalText('');
     try {
       const res = await startAIScan(target, scope);
       if (!res.scanId) throw new Error('No scanId received');
@@ -309,6 +321,33 @@ const AIAgent = () => {
           </div>
         )}
       </motion.div>
+
+      {/* ── Live Terminal Console ── */}
+      <AnimatePresence>
+        {(loading || terminalText.length > 0) && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="terminal" style={{ marginBottom: 14, overflow: 'hidden' }}
+          >
+            <div className="terminal-header">
+              <div className="terminal-dot red" /><div className="terminal-dot yellow" /><div className="terminal-dot green" />
+              <span className="terminal-title">live-terminal — {livePhase}</span>
+              {loading && <Loader2 size={10} className="spin" style={{ marginLeft: 'auto', color: '#10b981' }} />}
+            </div>
+            <div className="terminal-body" ref={terminalRef} style={{ minHeight: 150, maxHeight: 300, overflowY: 'auto' }}>
+              <pre style={{
+                margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                color: '#10b981', fontSize: 11, lineHeight: 1.5, fontFamily: "'JetBrains Mono', monospace"
+              }}>
+                {terminalText || 'Waiting for tool logs...'}
+                {loading && <span className="terminal-cursor" />}
+              </pre>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── AI Thinking Panel ── */}
       <AnimatePresence>

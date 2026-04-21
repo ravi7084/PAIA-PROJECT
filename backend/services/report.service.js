@@ -229,7 +229,8 @@ const generatePDF = (report, res) => {
   doc.moveDown(3);
 
   if (report.findings && report.findings.length > 0) {
-    report.findings.forEach((v, i) => {
+    const findingsPrint = report.findings.slice(0, 12);
+    findingsPrint.forEach((v, i) => {
       if (doc.y > 680) doc.addPage();
 
       const sc2 = sevColor(v.severity);
@@ -303,6 +304,11 @@ const generatePDF = (report, res) => {
       doc.rect(50, doc.y, pageWidth, 0.5).fill(C.border);
       doc.moveDown(0.8);
     });
+    
+    if (report.findings.length > 12) {
+      doc.moveDown(1);
+      doc.fillColor(C.primary).fontSize(10).font('Helvetica-Oblique').text(`...and ${report.findings.length - 12} additional findings. View the full list on the PAIA Dashboard.`, 50, doc.y, { align: 'center' });
+    }
   } else {
     doc.fillColor(C.textSub).fontSize(11).font('Helvetica').text('No vulnerabilities were identified during this scan.');
   }

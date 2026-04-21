@@ -10,6 +10,7 @@ router.post('/explain', ctrl.explainScan);     // POST /api/ai-agent/explain
 router.get('/status/:id', ctrl.getStatus);     // GET  /api/ai-agent/status/:id
 router.post('/stop/:id', ctrl.stopScan);       // POST /api/ai-agent/stop/:id
 router.get('/history', ctrl.getHistory);       // GET  /api/ai-agent/history
+router.get('/:id/pdf', ctrl.downloadScanPdf);  // GET  /api/ai-agent/:id/pdf
 router.delete('/:id', ctrl.deleteScan);        // DELETE /api/ai-agent/:id
 
 module.exports = router;

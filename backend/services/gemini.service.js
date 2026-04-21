@@ -11,17 +11,32 @@ const logger = require('../utils/logger');
 
 let genAI = null;
 let model = null;
+let apiKeys = [];
+let currentKeyIndex = 0;
 
 const getModel = () => {
+  if (apiKeys.length === 0) {
+    const rawKeys = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY;
+    if (!rawKeys) throw new Error('GEMINI_API_KEYS is not set in .env');
+    apiKeys = rawKeys.split(',').map(k => k.trim());
+  }
+
   if (!model) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error('GEMINI_API_KEY is not set in .env');
+    const key = apiKeys[currentKeyIndex % apiKeys.length];
     genAI = new GoogleGenerativeAI(key);
     model = genAI.getGenerativeModel({
       model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
     });
   }
   return model;
+};
+
+const rotateKey = () => {
+  currentKeyIndex++;
+  if (apiKeys.length > 0) {
+    logger.info(`Rotating Gemini API Key to slot #${(currentKeyIndex % apiKeys.length) + 1} of ${apiKeys.length}`);
+  }
+  model = null; // Force rebuild with new key in next getModel call
 };
 
 /* ── Smart Rate Limiter — max 12 RPM to stay within 15 RPM limit ── */
@@ -87,17 +102,20 @@ const extractJSON = (text) => {
 };
 
 /* ── Retry wrapper with rate limiting ── */
-const callGeminiWithRetry = async (prompt, maxRetries = 2) => {
-  const m = getModel();
+const callGeminiWithRetry = async (prompt, maxRetries = 20) => {
   let lastError = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
+      // Re-fetch model on each attempt so key rotation takes effect
+      const m = getModel();
+
       // Wait for rate limiter before each call
       await rateLimiter.waitForSlot();
 
       if (attempt > 0) {
-        const backoff = 2000 * Math.pow(2, attempt);
+        // Cap backoff at 10s. Exponential backoff is bad when we have 16 keys rotating.
+        const backoff = Math.min(2000 * attempt, 10000); 
         logger.info(`Gemini retry attempt ${attempt}/${maxRetries}, backoff ${backoff}ms`);
         await new Promise(r => setTimeout(r, backoff));
       }
@@ -114,10 +132,17 @@ const callGeminiWithRetry = async (prompt, maxRetries = 2) => {
       throw new Error('Gemini returned non-JSON response after retries');
     } catch (err) {
       lastError = err;
-      if (err.message?.includes('API key') || err.message?.includes('PERMISSION_DENIED')) throw err;
-      if (err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED')) {
-        logger.warn('Gemini rate limited, waiting 30s...');
-        await new Promise(r => setTimeout(r, 30000));
+      const errorMsg = err.message || '';
+      if (errorMsg.includes('API key') || errorMsg.includes('api_key') || errorMsg.includes('invalid') || errorMsg.includes('PERMISSION_DENIED')) {
+        logger.error(`Critical API Key Error: ${errorMsg}. Rotating immediately.`);
+        rotateKey();
+        continue; // Retry with next key immediately
+      }
+      if (errorMsg.includes('429') || errorMsg.includes('RESOURCE_EXHAUSTED') || errorMsg.includes('quota')) {
+        logger.warn('Gemini rate limited (429). Rotating to next key and waiting 2s...');
+        rotateKey();
+        await new Promise(r => setTimeout(r, 2000));
+        continue; // Try again with new key after short delay
       }
     }
   }
@@ -222,6 +247,12 @@ Generate a COMPLETE penetration test report for:
 
 TARGET: ${context.target}
 SCOPE: ${context.scope || 'full'}
+
+CRITICAL INSTRUCTION FOR SCOPE ENFORCEMENT:
+If SCOPE is 'recon-only': ONLY report on Threat Intelligence and passive OSINT data. DO NOT report or invent web vulnerabilities, SQLi, XSS, or internal network port findings.
+If SCOPE is 'network': ONLY report on open ports, services, operating systems, and network CVEs. DO NOT invent web application vulnerabilities.
+If SCOPE is 'web': ONLY report on web application vulnerabilities (like XSS, SQLi, headers, SSL). DO NOT invent infrastructure or network port vulnerabilities.
+If SCOPE is 'full': Consider all findings.
 
 ALL SCAN RESULTS:
 ${JSON.stringify(trimmedScans, null, 2)}
