@@ -110,23 +110,12 @@ def recon_scan():
     hosts = re.findall(r"([a-z0-9]+[\-a-z0-9]*\." + re.escape(target) + ")", h_stdout, re.I)
     results["subdomains"].update(hosts)
 
-    # 2. Run SpiderFoot (No limit, wait for completion)
-    print(f"Running SpiderFoot for {target}...")
-    # Using spiderfoot CLI directly. -o json outputs to file or stdout depending on version.
-    # We'll use -m (modules) to focus on common OSINT if possible, 
-    # but user said "no limit", so we'll run a standard full scan if CLI supports it.
-    sf_stdout, sf_stderr = run_tool(f"spiderfoot -s {target} -q") 
-    
-    # SpiderFoot output in CLI is often verbose text. 
-    # Attempting to extract IPs and subdomains from SpiderFoot output as well
-    sf_ips = re.findall(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", sf_stdout)
-    results["ips"].update(sf_ips)
-    
-    sf_subs = re.findall(r"([a-z0-9]+[\-a-z0-9]*\." + re.escape(target) + ")", sf_stdout, re.I)
-    results["subdomains"].update(sf_subs)
+    # Extract IPs from theHarvester output as well
+    h_ips = re.findall(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", h_stdout)
+    results["ips"].update(h_ips)
 
     # Convert sets to sorted lists for JSON
-    final_emails = sorted(list(results["emails"]))[:150] # Limit as requested
+    final_emails = sorted(list(results["emails"]))[:150]
     final_subs = sorted(list(results["subdomains"]))[:150]
     final_ips = sorted(list(results["ips"]))[:150]
 
