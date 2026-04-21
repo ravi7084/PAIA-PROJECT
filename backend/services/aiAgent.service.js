@@ -308,7 +308,7 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
        PHASE 5.5 — Safe Exploitation (Metasploit) (48% → 55%)
        ═══════════════════════════════════════════ */
     var exploitResults = null;
-    if (scope === 'recon-only') {
+    if (scope === 'recon-only' || scope === 'network') {
       logger.info(`Phase 5.5: Skipping Exploit Checks — scope is ${scope}`);
       await updateProgress(scanId, 'exploit_scan', 55, `Exploits skipped (Scope: ${scope})`);
     } else {
@@ -336,23 +336,28 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
        PHASE 5.6 — Traffic Analysis (Tshark) (55% → 62%)
        ═══════════════════════════════════════════ */
     var trafficResults = null;
-    try {
-      await updateProgress(scanId, 'traffic_scan', 55, 'Running Traffic Analysis (Tshark)...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'running' });
-      emit(io, scanId, 'ai:tool_running', { tool: 'traffic' });
-      
-      const res = await axios.post(`http://${KALI_IP}:5000/traffic`, { target: cleanTarget });
-      trafficResults = res.data;
-      completedScans.push({ tool: 'traffic', status: 'success', data: trafficResults });
-      usedTools.push('traffic');
-      
-      emit(io, scanId, 'ai:tool_complete', { tool: 'traffic', status: 'success' });
-      await updateProgress(scanId, 'traffic_scan', 62, 'Traffic Analysis complete');
-      emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'completed' });
-    } catch (err) {
-      logger.warn('Phase 5.6 (Traffic) failed: ' + err.message);
-      await updateProgress(scanId, 'traffic_scan', 62, 'Traffic Analysis failed, continuing');
-      emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'failed' });
+    if (scope === 'recon-only' || scope === 'web') {
+      logger.info(`Phase 5.6: Skipping Traffic Analysis — scope is ${scope}`);
+      await updateProgress(scanId, 'traffic_scan', 62, `Traffic Analysis skipped (Scope: ${scope})`);
+    } else {
+      try {
+        await updateProgress(scanId, 'traffic_scan', 55, 'Running Traffic Analysis (Tshark)...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'running' });
+        emit(io, scanId, 'ai:tool_running', { tool: 'traffic' });
+        
+        const res = await axios.post(`http://${KALI_IP}:5000/traffic`, { target: cleanTarget });
+        trafficResults = res.data;
+        completedScans.push({ tool: 'traffic', status: 'success', data: trafficResults });
+        usedTools.push('traffic');
+        
+        emit(io, scanId, 'ai:tool_complete', { tool: 'traffic', status: 'success' });
+        await updateProgress(scanId, 'traffic_scan', 62, 'Traffic Analysis complete');
+        emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'completed' });
+      } catch (err) {
+        logger.warn('Phase 5.6 (Traffic) failed: ' + err.message);
+        await updateProgress(scanId, 'traffic_scan', 62, 'Traffic Analysis failed, continuing');
+        emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'failed' });
+      }
     }
 
     /* ═══════════════════════════════════════════
@@ -467,8 +472,8 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
       if (allVulnerabilities.length === 0) {
         logger.info('Running heuristic fallback for findings extraction');
         
-        // 1. Extract from Nmap
-        if (nmapResults && nmapResults.openPorts && nmapResults.openPorts.length > 0) {
+        // 1. Extract from Nmap (Only if allowed by scope)
+        if (scope !== 'recon-only' && scope !== 'web' && nmapResults && nmapResults.openPorts && nmapResults.openPorts.length > 0) {
           nmapResults.openPorts.forEach(p => {
             allVulnerabilities.push({
               title: `Open Service: ${p.service || 'unknown'} on Port ${p.port}`,
@@ -482,20 +487,22 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
           });
         }
 
-        // 2. Extract from Nikto (Phase 5 was stored in completedScans)
-        const niktoScan = completedScans.find(s => s.tool === 'nikto' && s.status === 'success');
-        if (niktoScan && niktoScan.data && niktoScan.data.findings) {
-          niktoScan.data.findings.forEach(f => {
-            allVulnerabilities.push({
-              title: 'Web finding: ' + (f.slice(0, 50) + '...'),
-              type: 'Web Security',
-              severity: f.toLowerCase().includes('vulnerable') ? 'high' : 'medium',
-              description: f,
-              evidence: f,
-              remediation: 'Investigate the specific Nikto finding and patch the web server configuration or application code.',
-              tool: 'nikto'
+        // 2. Extract from Nikto (Only if allowed by scope)
+        if (scope !== 'recon-only' && scope !== 'network') {
+          const niktoScan = completedScans.find(s => s.tool === 'nikto' && s.status === 'success');
+          if (niktoScan && niktoScan.data && niktoScan.data.findings) {
+            niktoScan.data.findings.forEach(f => {
+              allVulnerabilities.push({
+                title: 'Web finding: ' + (f.slice(0, 50) + '...'),
+                type: 'Web Security',
+                severity: f.toLowerCase().includes('vulnerable') ? 'high' : 'medium',
+                description: f,
+                evidence: f,
+                remediation: 'Investigate the specific Nikto finding and patch the web server configuration or application code.',
+                tool: 'nikto'
+              });
             });
-          });
+          }
         }
 
         // 3. Extract from Subfinder
@@ -510,6 +517,22 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
             remediation: 'Ensure all subdomains are authorized and do not expose sensitive development or staging environments.',
             tool: 'subfinder'
           });
+        }
+
+        // 4. Extract from Traffic Analysis (Only if allowed by scope)
+        if (scope !== 'recon-only' && scope !== 'web') {
+          const trafficScan = completedScans.find(s => s.tool === 'traffic' && s.status === 'success');
+          if (trafficScan && trafficScan.data && trafficScan.data.analysis) {
+            allVulnerabilities.push({
+              title: 'Network Traffic Risk: Insecure Protocols Detected',
+              type: 'Network Security',
+              severity: 'medium',
+              description: 'Analysis of network traffic identified usage of potentially insecure or unencrypted protocols.',
+              evidence: trafficScan.data.analysis,
+              remediation: 'Review the captured traffic and enforce encrypted communication (SSL/TLS/SSH) for all sensitive network operations.',
+              tool: 'traffic'
+            });
+          }
         }
       }
     }

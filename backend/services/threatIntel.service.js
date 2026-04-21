@@ -1,8 +1,8 @@
 /**
  * ╔══════════════════════════════════════════════╗
  * ║   PAIA — Threat Intelligence Service         ║
- * ║   API-based lookups: Shodan, VirusTotal,     ║
- * ║   WHOIS, AbuseIPDB, Hunter, OTX, Censys      ║
+ * ║   API-based lookups: VirusTotal, WHOIS,      ║
+ * ║   AbuseIPDB, OTX                             ║
  * ╚══════════════════════════════════════════════╝
  */
 
@@ -42,91 +42,6 @@ const saveCache = async (target, provider, data) => {
   );
 };
 
-/* ───────────────────────────────────────────────
-   1. SHODAN
-   Docs: https://developer.shodan.io/api
-   ─────────────────────────────────────────────── */
-const shodanLookup = safe(async (target) => {
-  const key = process.env.SHODAN_API_KEY;
-  if (!key) return { provider: 'shodan', skipped: true, reason: 'No API key' };
-
-  const ip = await resolveToIP(target);
-  if (!ip) return { provider: 'shodan', skipped: true, reason: 'Could not resolve IP for Shodan' };
-
-  const cached = await getCached(ip, 'shodan');
-  if (cached) return { provider: 'shodan', cached: true, ...cached };
-
-  const url = `https://api.shodan.io/shodan/host/${ip}?key=${key}`;
-  const { data } = await axios.get(url, { timeout: 15000 });
-
-  const result = {
-    provider: 'shodan',
-    ip: data.ip_str || target,
-    org: data.org || '',
-    isp: data.isp || '',
-    os: data.os || '',
-    ports: data.ports || [],
-    hostnames: data.hostnames || [],
-    vulns: data.vulns || [],
-    services: (data.data || []).map((s) => ({
-      port: s.port,
-      transport: s.transport,
-      product: s.product || '',
-      version: s.version || '',
-      banner: (s.data || '').slice(0, 500),
-    })),
-    lastUpdate: data.last_update || '',
-    country: data.country_name || '',
-    city: data.city || '',
-  };
-
-  await saveCache(ip, 'shodan', result);
-  return result;
-}, 'shodan');
-
-/* ───────────────────────────────────────────────
-   2. CENSYS
-   Docs: https://search.censys.io/api
-   ─────────────────────────────────────────────── */
-const censysLookup = safe(async (target) => {
-  const id = process.env.CENSYS_API_ID;
-  const secret = process.env.CENSYS_API_SECRET;
-  if (!id || !secret) return { provider: 'censys', skipped: true, reason: 'No API credentials' };
-
-  const ip = await resolveToIP(target);
-  if (!ip) return { provider: 'censys', skipped: true, reason: 'Could not resolve IP for Censys' };
-
-  const cached = await getCached(ip, 'censys');
-  if (cached) return { provider: 'censys', cached: true, ...cached };
-
-  const auth = Buffer.from(`${id}:${secret}`).toString('base64');
-  const { data } = await axios.get(`https://search.censys.io/api/v2/hosts/${ip}`, {
-    headers: { Authorization: `Basic ${auth}` },
-    timeout: 15000,
-  });
-
-  const host = data?.result || {};
-  const result = {
-    provider: 'censys',
-    ip: host.ip || target,
-    services: (host.services || []).map((s) => ({
-      port: s.port,
-      serviceName: s.service_name || '',
-      transportProtocol: s.transport_protocol || '',
-      certificate: s.tls?.certificates?.leaf?.subject_dn || '',
-    })),
-    operatingSystem: host.operating_system?.product || '',
-    lastUpdated: host.last_updated_at || '',
-    autonomousSystem: {
-      asn: host.autonomous_system?.asn || '',
-      name: host.autonomous_system?.name || '',
-      country: host.autonomous_system?.country_code || '',
-    },
-  };
-
-  await saveCache(ip, 'censys', result);
-  return result;
-}, 'censys');
 
 /* ───────────────────────────────────────────────
    3. WHOIS (WhoisXMLAPI)
@@ -246,43 +161,6 @@ const abuseIPDBLookup = safe(async (ip) => {
   return result;
 }, 'abuseipdb');
 
-/* ───────────────────────────────────────────────
-   6. HUNTER.IO
-   Docs: https://hunter.io/api-documentation
-   ─────────────────────────────────────────────── */
-const hunterLookup = safe(async (domain) => {
-  const key = process.env.HUNTER_API_KEY;
-  if (!key) return { provider: 'hunter', skipped: true, reason: 'No API key' };
-  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(domain)) return { provider: 'hunter', skipped: true, reason: 'IP not supported' };
-
-  const cached = await getCached(domain, 'hunter');
-  if (cached) return { provider: 'hunter', cached: true, ...cached };
-
-  const { data } = await axios.get('https://api.hunter.io/v2/domain-search', {
-    params: { domain, api_key: key },
-    timeout: 15000,
-  });
-
-  const d = data?.data || {};
-  const result = {
-    provider: 'hunter',
-    domain: d.domain || domain,
-    organization: d.organization || '',
-    totalEmails: d.emails?.length || 0,
-    emails: (d.emails || []).slice(0, 20).map((e) => ({
-      value: e.value,
-      type: e.type,
-      confidence: e.confidence,
-      firstName: e.first_name || '',
-      lastName: e.last_name || '',
-      position: e.position || '',
-    })),
-    pattern: d.pattern || '',
-  };
-
-  await saveCache(domain, 'hunter', result);
-  return result;
-}, 'hunter');
 
 /* ───────────────────────────────────────────────
    7. ALIENVAULT OTX
@@ -334,7 +212,6 @@ const runAllThreatIntel = async (target) => {
   const isIp = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(target);
 
   const tasks = [
-    shodanLookup(target),
     virusTotalLookup(target),
     otxLookup(target),
   ];
@@ -343,12 +220,6 @@ const runAllThreatIntel = async (target) => {
     tasks.push(abuseIPDBLookup(target));
   } else {
     tasks.push(whoisLookup(target));
-    tasks.push(hunterLookup(target));
-  }
-
-  // Censys only if API creds exist
-  if (process.env.CENSYS_API_ID && process.env.CENSYS_API_SECRET) {
-    tasks.push(censysLookup(target));
   }
 
   const results = await Promise.allSettled(tasks);
@@ -359,12 +230,9 @@ const runAllThreatIntel = async (target) => {
 };
 
 module.exports = {
-  shodanLookup,
-  censysLookup,
   whoisLookup,
   virusTotalLookup,
   abuseIPDBLookup,
-  hunterLookup,
   otxLookup,
   runAllThreatIntel,
 };
