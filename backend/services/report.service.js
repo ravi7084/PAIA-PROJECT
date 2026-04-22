@@ -177,14 +177,15 @@ const generatePDF = (report, res) => {
   doc.rect(0, 0, doc.page.width, 50).fill(C.primary);
   doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text('Table of Contents', 50, 18);
 
+  // Dynamic ToC — only show sections that have data
   const tocItems = [
-    { num: '1', title: 'Executive Summary', page: '3' },
-    { num: '2', title: 'Risk Assessment', page: '3' },
-    { num: '3', title: 'Detailed Findings', page: '4' },
-    { num: '4', title: 'MITRE ATT&CK Analysis', page: '-' },
-    { num: '5', title: 'Recommendations', page: '-' },
-    { num: '6', title: 'Methodology', page: '-' },
+    { num: '1', title: 'Executive Summary' },
+    { num: '2', title: 'Risk Assessment' },
   ];
+  if (report.findings && report.findings.length > 0) tocItems.push({ num: String(tocItems.length + 1), title: 'Detailed Findings' });
+  if (report.mitreAttackSummary || (report.mitreAttackMapping && report.mitreAttackMapping.chain && report.mitreAttackMapping.chain.length > 0)) tocItems.push({ num: String(tocItems.length + 1), title: 'MITRE ATT&CK Analysis' });
+  if (report.recommendations && report.recommendations.length > 0) tocItems.push({ num: String(tocItems.length + 1), title: 'Recommendations' });
+  tocItems.push({ num: String(tocItems.length + 1), title: 'Methodology' });
 
   let tocY = 90;
   tocItems.forEach(item => {
@@ -192,6 +193,8 @@ const generatePDF = (report, res) => {
     doc.font('Helvetica').fillColor(C.text).text(item.title, 90, tocY);
     tocY += 28;
   });
+  // Section numbering tracker
+  let sectionNum = 2;
 
 
   // ═══════════════════════════════════════════
@@ -223,12 +226,27 @@ const generatePDF = (report, res) => {
   //   DETAILED FINDINGS
   // ═══════════════════════════════════════════
   doc.addPage();
+  sectionNum++;
   doc.rect(0, 0, doc.page.width, 50).fill(C.primary);
-  doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text('3. Detailed Findings', 50, 18);
+  doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text(`${sectionNum}. Detailed Findings`, 50, 18);
 
   doc.moveDown(3);
 
   if (report.findings && report.findings.length > 0) {
+    // Sort findings: Critical -> High -> Medium -> Low -> Info
+    const sevOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+    report.findings.sort((a, b) => (sevOrder[a.severity] ?? 5) - (sevOrder[b.severity] ?? 5));
+
+    // Findings Summary Box
+    const sc3 = report.severityCounts || {};
+    doc.rect(50, doc.y, pageWidth, 40).lineWidth(1).fillAndStroke(C.primary + '08', C.primary + '30');
+    doc.fillColor(C.text).fontSize(10).font('Helvetica-Bold');
+    doc.text(`Total Vulnerabilities: ${report.findings.length}`, 65, doc.y - 30);
+    doc.fontSize(9).font('Helvetica').fillColor(C.textSub);
+    const countsLine = [sc3.critical ? `${sc3.critical} Critical` : '', sc3.high ? `${sc3.high} High` : '', sc3.medium ? `${sc3.medium} Medium` : '', sc3.low ? `${sc3.low} Low` : '', sc3.info ? `${sc3.info} Info` : ''].filter(Boolean).join('  |  ');
+    doc.text(countsLine, 65, doc.y + 2);
+    doc.moveDown(2);
+
     const findingsPrint = report.findings.slice(0, 12);
     findingsPrint.forEach((v, i) => {
       if (doc.y > 680) doc.addPage();
@@ -283,6 +301,14 @@ const generatePDF = (report, res) => {
       doc.font('Helvetica').fillColor(C.textSub).text(v.remediation || 'Review and patch', 62, doc.y, { width: pageWidth - 24 });
       doc.moveDown(0.5);
 
+      // Quick Fix one-liner (highlighted box)
+      const quickFix = (v.remediation || 'Review and patch').split('.')[0].trim() + '.';
+      doc.rect(62, doc.y, pageWidth - 24, 20).fill('#10b98110');
+      doc.rect(62, doc.y, 3, 20).fill(C.green);
+      doc.fillColor(C.green).fontSize(8).font('Helvetica-Bold').text('QUICK FIX: ', 72, doc.y + 5, { continued: true });
+      doc.font('Helvetica').fillColor(C.textSub).text(quickFix.substring(0, 120), { width: pageWidth - 60 });
+      doc.moveDown(0.8);
+
       // MITRE ATT&CK
       if (v.mitreMapping && v.mitreMapping.length > 0) {
         doc.fillColor(C.primary).fontSize(8).font('Helvetica-Bold').text('MITRE ATT&CK:', 62);
@@ -317,10 +343,11 @@ const generatePDF = (report, res) => {
   // ═══════════════════════════════════════════
   //   MITRE ATT&CK ANALYSIS
   // ═══════════════════════════════════════════
-  if (report.mitreAttackSummary || (report.mitreAttackMapping && report.mitreAttackMapping.chain)) {
+  if (report.mitreAttackSummary || (report.mitreAttackMapping && report.mitreAttackMapping.chain && report.mitreAttackMapping.chain.length > 0)) {
     doc.addPage();
+    sectionNum++;
     doc.rect(0, 0, doc.page.width, 50).fill(C.primary);
-    doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text('4. MITRE ATT&CK Analysis', 50, 18);
+    doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text(`${sectionNum}. MITRE ATT&CK Analysis`, 50, 18);
 
     doc.moveDown(3);
 
@@ -375,11 +402,10 @@ const generatePDF = (report, res) => {
   //   RECOMMENDATIONS
   // ═══════════════════════════════════════════
   if (report.recommendations && report.recommendations.length > 0) {
-    if (doc.y > 600) doc.addPage();
-
     doc.addPage();
+    sectionNum++;
     doc.rect(0, 0, doc.page.width, 50).fill(C.primary);
-    doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text('5. Recommendations', 50, 18);
+    doc.fillColor(C.white).fontSize(18).font('Helvetica-Bold').text(`${sectionNum}. Recommendations`, 50, 18);
 
     doc.moveDown(3);
     doc.fillColor(C.text).fontSize(11).font('Helvetica');
@@ -401,16 +427,17 @@ const generatePDF = (report, res) => {
   // ═══════════════════════════════════════════
   //   METHODOLOGY
   // ═══════════════════════════════════════════
-  if (doc.y > 550) doc.addPage();
+  if (doc.y > 600) doc.addPage();
 
   doc.moveDown(2);
-  doc.fillColor(C.primary).fontSize(14).font('Helvetica-Bold').text('6. Methodology');
+  sectionNum++;
+  doc.fillColor(C.primary).fontSize(14).font('Helvetica-Bold').text(`${sectionNum}. Methodology`);
   doc.moveDown(0.8);
   doc.fillColor(C.text).fontSize(10).font('Helvetica');
   doc.text(report.methodology || 'Automated AI-driven penetration testing', 50, doc.y, { width: pageWidth });
 
   doc.moveDown(1);
-  doc.text('Tools Used: Shodan, VirusTotal, WHOIS, AbuseIPDB, OTX, Censys, Nmap, Nikto, NVD, Vulners, Google Gemini AI');
+  doc.text('Tools Used: VirusTotal, WHOIS, AbuseIPDB, AlienVault OTX, Nmap, Nikto, Subfinder, theHarvester, NVD, Vulners, Groq/Gemini AI');
   doc.moveDown(0.5);
   doc.text('Frameworks: OWASP Testing Guide, PTES, MITRE ATT&CK, CVSS v3.1');
 

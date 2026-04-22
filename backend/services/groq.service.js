@@ -114,7 +114,7 @@ const callGroq = async (messages, maxTokens = 4096, retries = 3) => {
       logger.warn(`Groq attempt ${attempt}/${retries} failed: ${errMsg}`);
 
       if (attempt < retries) {
-        const wait = attempt * 2000;
+        const wait = attempt * 12000;
         logger.info(`Groq retry in ${wait}ms...`);
         await new Promise((r) => setTimeout(r, wait));
       }
