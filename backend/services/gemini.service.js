@@ -8,6 +8,14 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const logger = require('../utils/logger');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
+const CACHE_DIR = path.join(__dirname, '../cache/gemini');
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
 
 let genAI = null;
 let model = null;
@@ -72,19 +80,62 @@ const rateLimiter = {
   },
 };
 
+/* ── Caching Helpers ── */
+const getCacheKey = (prompt) => {
+  return crypto.createHash('sha256').update(prompt).digest('hex');
+};
+
+const getCachedResponse = (key) => {
+  try {
+    const cachePath = path.join(CACHE_DIR, `${key}.json`);
+    if (fs.existsSync(cachePath)) {
+      const data = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      // 24 hour expiry
+      if (Date.now() - data.timestamp < 24 * 60 * 60 * 1000) return data.response;
+    }
+  } catch (err) { /* ignore cache errors */ }
+  return null;
+};
+
+const saveCacheResponse = (key, response) => {
+  try {
+    const cachePath = path.join(CACHE_DIR, `${key}.json`);
+    fs.writeFileSync(cachePath, JSON.stringify({ timestamp: Date.now(), response }, null, 2));
+  } catch (err) { /* ignore cache errors */ }
+};
+
+/* ── Normalize & Deduplicate Data for AI ── */
+const normalizeData = (data) => {
+  if (!data) return [];
+  if (!Array.isArray(data)) return data;
+
+  const seen = new Set();
+  return data.filter(item => {
+    if (!item) return false;
+    const uniq = `${item.title || item.tool || ''}-${item.evidence || item.status || ''}`;
+    if (seen.has(uniq)) return false;
+    seen.add(uniq);
+    return true;
+  }).slice(0, 40); // Hard cap to prevent token explosion
+};
+
 /* ── Trim scan data to avoid token limits ── */
 const trimScanData = (data, maxChars = 2000) => {
-  const str = JSON.stringify(data, null, 2);
+  if (!data) return null;
+  const str = JSON.stringify(data);
   if (str.length <= maxChars) return data;
 
   const trimmed = JSON.parse(str);
   const trimObj = (obj) => {
-    if (typeof obj === 'string' && obj.length > 200) return obj.slice(0, 200) + '...[T]';
-    if (Array.isArray(obj) && obj.length > 5) return [...obj.slice(0, 5), `...and ${obj.length - 5} more`];
+    if (typeof obj === 'string' && obj.length > 150) return obj.slice(0, 150) + '...[T]';
+    if (Array.isArray(obj)) {
+      if (obj.length > 5) return [...obj.slice(0, 5), `...[+${obj.length - 5} items]`];
+      return obj.map(trimObj);
+    }
     if (typeof obj === 'object' && obj !== null) {
-      for (const key of Object.keys(obj)) {
-        obj[key] = trimObj(obj[key]);
-      }
+      const newObj = {};
+      Object.keys(obj).forEach(k => { newObj[k] = trimObj(obj[k]); });
+      return newObj;
     }
     return obj;
   };
@@ -102,9 +153,16 @@ const extractJSON = (text) => {
 };
 
 /* ── Retry wrapper with rate limiting ── */
-const callGeminiWithRetry = async (prompt, maxRetries = 20) => {
-  let lastError = null;
+const callGeminiWithRetry = async (prompt, maxRetries = 10) => {
+  // Check Cache First
+  const cacheKey = getCacheKey(prompt);
+  const cached = getCachedResponse(cacheKey);
+  if (cached) {
+    logger.info('Gemini: Using cached response');
+    return cached;
+  }
 
+  let lastError = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       // Re-fetch model on each attempt so key rotation takes effect
@@ -123,7 +181,10 @@ const callGeminiWithRetry = async (prompt, maxRetries = 20) => {
       const result = await m.generateContent(prompt);
       const text = result.response.text();
       const json = extractJSON(text);
-      if (json) return json;
+      if (json) {
+        saveCacheResponse(cacheKey, json);
+        return json;
+      }
 
       if (attempt < maxRetries) {
         logger.warn('Gemini returned non-JSON, retrying');
@@ -149,56 +210,62 @@ const callGeminiWithRetry = async (prompt, maxRetries = 20) => {
   throw lastError || new Error('Gemini call failed after retries');
 };
 
-const SYSTEM_PROMPT = `You are PAIA (Penetration Testing AI Agent), an expert AI cybersecurity analyst and penetration tester.
+const SYSTEM_PROMPT = `You are PAIA (Penetration Testing AI Agent), an autonomous expert AI cybersecurity analyst and penetration tester.
 
 Your role:
-- Analyze security scan results from various tools (Shodan, VirusTotal, WHOIS, Nmap, Nikto, NVD, Vulners)
-- Identify vulnerabilities, misconfigurations, and security risks
-- Map findings to MITRE ATT&CK techniques and tactics
-- Decide the next optimal testing step based on current findings
-- Follow OWASP Testing Guide, PTES, and MITRE ATT&CK methodologies
-- Calculate CVSS scores and provide real-world risk context
-- Provide professional remediation recommendations
+- Act as an autonomous agent orchestrating a multi-tool penetration testing pipeline.
+- You have access to the Model Context Protocol (MCP) toolset to interact with the target.
+- Analyze security scan results in real-time and decide the next logical step.
+- Map findings to MITRE ATT&CK techniques and tactics.
+- Follow OWASP Testing Guide, PTES, and MITRE ATT&CK methodologies.
+
+AVAILABLE MCP TOOLS:
+1. run_subfinder: Discovers subdomains (OSINT).
+2. run_recon: Deep OSINT for emails and IPs (theHarvester).
+3. nmap_scan: Network port and service discovery.
+4. web_scan_nikto: Web application vulnerability scanning.
+5. exploit_check: Safe exploitation checks (Metasploit).
+6. traffic_analysis: Protocol and traffic risk assessment (Tshark).
 
 Rules:
-- ALWAYS respond in strict JSON format (no markdown, no extra text)
-- NEVER recommend scanning unauthorized targets
-- NEVER attempt destructive attacks
-- Focus on detection and assessment, not exploitation
-- Be thorough but respect the scope boundaries
-- Include MITRE ATT&CK tactic/technique IDs where applicable
-- When in doubt, recommend passive/safe scans first`;
+- ALWAYS respond in strict JSON format.
+- Decide the NEXT ACTION based on current iteration results.
+- If you have enough data, choose "generate_report" to finish.
+- Focus on discovery first (Subfinder/Recon) before active scanning (Nmap/Nikto).
+- Never send raw large outputs if a compact summary can be generated.
+- Include MITRE ATT&CK tactic/technique IDs where applicable.`;
 
 /**
  * Analyze scan results and decide what to do next
  */
 const analyzeAndDecide = async (context) => {
-  const trimmedScans = trimScanData(context.completedScans || []);
+  if (!context.completedScans || context.completedScans.length === 0) {
+    return { nextAction: 'generate_report', reasoning: 'No scan data available' };
+  }
+  const trimmedScans = trimScanData(normalizeData(context.completedScans));
 
   const prompt = `${SYSTEM_PROMPT}
 
 TARGET: ${context.target}
 SCOPE: ${context.scope || 'full'}
-CURRENT ITERATION: ${context.iteration || 0}/${context.maxIterations || 10}
+CURRENT ITERATION: ${context.iteration || 0}/${context.maxIterations || 5}
 
 COMPLETED SCANS & RESULTS:
 ${JSON.stringify(trimmedScans, null, 2)}
 
-AVAILABLE TOOLS: ["shodan_api", "virustotal_api", "whois_api", "abuseipdb_api", "hunter_api", "otx_api", "censys_api", "nmap_cli", "nikto_cli", "subfinder_cli", "amass_cli", "builtin_scan", "nvd_lookup", "vulners_search"]
-
 ALREADY USED TOOLS: ${JSON.stringify(context.usedTools || [])}
 
 Based on current results, decide:
-1. What scan/tool should run NEXT?
+1. What scan/tool should run NEXT? (Use ONLY from the AVAILABLE MCP TOOLS list)
 2. WHY? (explain reasoning)
 3. What vulnerabilities have you identified so far?
 4. Map each vulnerability to MITRE ATT&CK tactics and techniques
 
 Respond ONLY in this exact JSON format:
 {
-  "nextAction": "tool_name or 'generate_report' if done",
+  "nextAction": "run_subfinder|run_recon|nmap_scan|web_scan_nikto|exploit_check|traffic_analysis|generate_report",
   "parameters": { "target": "...", "flags": "..." },
-  "reasoning": "Why this is the next best step",
+  "reasoning": "...",
   "riskLevel": "info|low|medium|high|critical",
   "shouldContinue": true,
   "currentFindings": [
@@ -208,9 +275,9 @@ Respond ONLY in this exact JSON format:
       "severity": "critical|high|medium|low|info",
       "cvss": 0.0,
       "description": "What was found",
-      "evidence": "Raw data supporting this",
-      "remediation": "How to fix",
-      "cveId": "CVE-XXXX-XXXX or empty",
+      "evidence": "...",
+      "remediation": "...",
+      "cveId": "...",
       "mitreAttack": [{ "tacticId": "TA0001", "tacticName": "Initial Access", "techniqueId": "T1190", "techniqueName": "Exploit Public-Facing Application" }]
     }
   ]
@@ -238,8 +305,8 @@ Respond ONLY in this exact JSON format:
  * Generate a complete penetration test report
  */
 const generateReport = async (context) => {
-  const trimmedScans = trimScanData(context.completedScans || []);
-  const trimmedVulns = trimScanData(context.vulnerabilities || []);
+  const trimmedScans = trimScanData(normalizeData(context.completedScans));
+  const trimmedVulns = trimScanData(normalizeData(context.vulnerabilities));
 
   const prompt = `${SYSTEM_PROMPT}
 

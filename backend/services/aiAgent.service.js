@@ -191,349 +191,174 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
     const KALI_IP = process.env.REMOTE_SCANNER_IP || '127.0.0.1';
 
     /* ═══════════════════════════════════════════
-       PHASE 2 — Subdomain Discovery (18% → 25%)
+       DYNAMIC ORCHESTRATION LOOP (MCP-Style)
+       Iterations 1 to 5: Discovery, Recon, Scanning
        ═══════════════════════════════════════════ */
-    var subfinderResults = null;
-    if (scope === 'network' || scope === 'web') {
-      logger.info(`Phase 2: Skipping Subfinder — scope is ${scope}`);
-      await updateProgress(scanId, 'subdomain_scan', 25, `Subfinder skipped (Scope: ${scope})`);
-    } else {
-      try {
-        await updateProgress(scanId, 'subdomain_scan', 18, 'Running Subdomain Discovery (Subfinder)...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_scan', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'subfinder' });
-        
-        const res = await axios.post(`http://${KALI_IP}:5000/subfinder`, { target: cleanTarget });
-        subfinderResults = res.data;
-        completedScans.push({ tool: 'subfinder', status: 'success', data: subfinderResults });
-        usedTools.push('subfinder');
-        
-        emit(io, scanId, 'ai:tool_complete', { tool: 'subfinder', status: 'success' });
-        await updateProgress(scanId, 'subdomain_scan', 25, 'Subdomain scan complete');
-        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_scan', status: 'completed' });
-      } catch (err) {
-        logger.warn('Phase 2 (Subfinder) failed: ' + err.message);
-        await updateProgress(scanId, 'subdomain_scan', 25, 'Subdomain scan failed, continuing');
-        emit(io, scanId, 'ai:phase_update', { phase: 'subdomain_scan', status: 'failed' });
+    let iteration = 1;
+    const maxIterations = 5;
+    let shouldContinue = true;
+
+    while (iteration <= maxIterations && shouldContinue) {
+      logger.info(`Starting AI Agent Iteration ${iteration}/${maxIterations}`);
+      
+      // --- STRICT THROTTLE: Wait 6s to stay under 15 RPM limit ---
+      if (iteration > 1) {
+        logger.info('Throttling: Waiting 6s to prevent Gemini rate limits...');
+        emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'Thinking (RPM limit protection)...' });
+        await new Promise(r => setTimeout(r, 6000));
       }
-    }
 
-    /* ═══════════════════════════════════════════
-       PHASE 3 — Deep Recon (25% → 32%)
-       ═══════════════════════════════════════════ */
-    var reconResults = null;
-    if (scope === 'network' || scope === 'web') {
-      logger.info(`Phase 3: Skipping Deep Recon — scope is ${scope}`);
-      await updateProgress(scanId, 'deep_recon', 32, `Deep Recon skipped (Scope: ${scope})`);
-    } else {
-      try {
-        await updateProgress(scanId, 'deep_recon', 25, 'Running Deep Recon (theHarvester, SpiderFoot)...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'deep_recon', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'recon' });
-        
-        const res = await axios.post(`http://${KALI_IP}:5000/recon`, { target: cleanTarget });
-        reconResults = res.data;
-        completedScans.push({ tool: 'recon', status: 'success', data: reconResults });
-        usedTools.push('recon');
-        
-        emit(io, scanId, 'ai:tool_complete', { tool: 'recon', status: 'success' });
-        await updateProgress(scanId, 'deep_recon', 32, 'Deep Recon complete');
-        emit(io, scanId, 'ai:phase_update', { phase: 'deep_recon', status: 'completed' });
-      } catch (err) {
-        logger.warn('Phase 3 (Recon) failed: ' + err.message);
-        await updateProgress(scanId, 'deep_recon', 32, 'Deep Recon failed, continuing');
-        emit(io, scanId, 'ai:phase_update', { phase: 'deep_recon', status: 'failed' });
-      }
-    }
+      emit(io, scanId, 'ai:thinking', { iteration, maxIterations });
 
-    /* ═══════════════════════════════════════════
-       PHASE 4 — Network Recon (NMAP) (32% → 40%)
-       ═══════════════════════════════════════════ */
-    var nmapResults = { openPorts: [] };
-    if (scope === 'recon-only' || scope === 'web') {
-      logger.info(`Phase 4: Skipping Nmap — scope is ${scope}`);
-      await updateProgress(scanId, 'network_scan', 40, `Nmap skipped (Scope: ${scope})`);
-    } else {
-      try {
-        await updateProgress(scanId, 'network_scan', 32, 'Running Network Scan (Nmap)...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'network_scan', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'nmap' });
-        
-        const res = await axios.post(`http://${KALI_IP}:5000/nmap`, { target: cleanTarget });
-        nmapResults.openPorts = res.data.ports || [];
-        completedScans.push({ tool: 'nmap', status: 'success', data: { openPorts: nmapResults.openPorts } });
-        usedTools.push('nmap');
-        
-        emit(io, scanId, 'ai:terminal_log', { tool: 'nmap', text: res.data.raw || 'Nmap scan completed successfully via API.\n' });
-        emit(io, scanId, 'ai:tool_complete', { tool: 'nmap', status: 'success' });
-        await updateProgress(scanId, 'network_scan', 40, 'Nmap scan complete');
-        emit(io, scanId, 'ai:phase_update', { phase: 'network_scan', status: 'completed' });
-      } catch (err) {
-        logger.warn('Phase 4 (Nmap) failed: ' + err.message);
-        await updateProgress(scanId, 'network_scan', 40, 'Nmap failed, continuing');
-        emit(io, scanId, 'ai:phase_update', { phase: 'network_scan', status: 'failed' });
-      }
-    }
-
-    /* ═══════════════════════════════════════════
-       PHASE 5 — Web Vulnerability (Nikto) (40% → 48%)
-       ═══════════════════════════════════════════ */
-    var niktoResults = null;
-    if (scope === 'recon-only' || scope === 'network') {
-      logger.info(`Phase 5: Skipping Nikto — scope is ${scope}`);
-      await updateProgress(scanId, 'nikto_scan', 48, `Nikto skipped (Scope: ${scope})`);
-    } else {
-      try {
-        await updateProgress(scanId, 'nikto_scan', 40, 'Running Web Vulnerability Scan (Nikto)...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'nikto' });
-        
-        const res = await axios.post(`http://${KALI_IP}:5000/nikto`, { target: cleanTarget });
-        niktoResults = res.data;
-        completedScans.push({ tool: 'nikto', status: 'success', data: { findingCount: (res.data.findings || []).length, findings: (res.data.findings || []).slice(0, 15) } });
-        usedTools.push('nikto');
-        
-        emit(io, scanId, 'ai:terminal_log', { tool: 'nikto', text: res.data.raw || 'Nikto scan completed successfully via API.\n' });
-        emit(io, scanId, 'ai:tool_complete', { tool: 'nikto', status: 'success' });
-        await updateProgress(scanId, 'nikto_scan', 48, 'Nikto scan complete');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'completed' });
-      } catch (err) {
-        logger.warn('Phase 5 (Nikto) failed: ' + err.message);
-        await updateProgress(scanId, 'nikto_scan', 48, 'Nikto failed, continuing');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nikto_scan', status: 'failed' });
-      }
-    }
-
-    /* ═══════════════════════════════════════════
-       PHASE 5.5 — Safe Exploitation (Metasploit) (48% → 55%)
-       ═══════════════════════════════════════════ */
-    var exploitResults = null;
-    if (scope === 'recon-only' || scope === 'network') {
-      logger.info(`Phase 5.5: Skipping Exploit Checks — scope is ${scope}`);
-      await updateProgress(scanId, 'exploit_scan', 55, `Exploits skipped (Scope: ${scope})`);
-    } else {
-      try {
-        await updateProgress(scanId, 'exploit_scan', 48, 'Running Safe Exploitation Checks (Metasploit)...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'exploit_scan', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'exploit' });
-        
-        const res = await axios.post(`http://${KALI_IP}:5000/exploit`, { target: cleanTarget });
-        exploitResults = res.data;
-        completedScans.push({ tool: 'exploit', status: 'success', data: exploitResults });
-        usedTools.push('exploit');
-        
-        emit(io, scanId, 'ai:tool_complete', { tool: 'exploit', status: 'success' });
-        await updateProgress(scanId, 'exploit_scan', 55, 'Safe Exploit checks complete');
-        emit(io, scanId, 'ai:phase_update', { phase: 'exploit_scan', status: 'completed' });
-      } catch (err) {
-        logger.warn('Phase 5.5 (Exploit) failed: ' + err.message);
-        await updateProgress(scanId, 'exploit_scan', 55, 'Exploit checks failed, continuing');
-        emit(io, scanId, 'ai:phase_update', { phase: 'exploit_scan', status: 'failed' });
-      }
-    }
-
-    /* ═══════════════════════════════════════════
-       PHASE 5.6 — Traffic Analysis (Tshark) (55% → 62%)
-       ═══════════════════════════════════════════ */
-    var trafficResults = null;
-    if (scope === 'recon-only' || scope === 'web') {
-      logger.info(`Phase 5.6: Skipping Traffic Analysis — scope is ${scope}`);
-      await updateProgress(scanId, 'traffic_scan', 62, `Traffic Analysis skipped (Scope: ${scope})`);
-    } else {
-      try {
-        await updateProgress(scanId, 'traffic_scan', 55, 'Running Traffic Analysis (Tshark)...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'traffic' });
-        
-        const res = await axios.post(`http://${KALI_IP}:5000/traffic`, { target: cleanTarget });
-        trafficResults = res.data;
-        completedScans.push({ tool: 'traffic', status: 'success', data: trafficResults });
-        usedTools.push('traffic');
-        
-        emit(io, scanId, 'ai:tool_complete', { tool: 'traffic', status: 'success' });
-        await updateProgress(scanId, 'traffic_scan', 62, 'Traffic Analysis complete');
-        emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'completed' });
-      } catch (err) {
-        logger.warn('Phase 5.6 (Traffic) failed: ' + err.message);
-        await updateProgress(scanId, 'traffic_scan', 62, 'Traffic Analysis failed, continuing');
-        emit(io, scanId, 'ai:phase_update', { phase: 'traffic_scan', status: 'failed' });
-      }
-    }
-
-    /* ═══════════════════════════════════════════
-       PHASE 6 — NVD + Vulners Enrichment (62% → 72%)
-       ═══════════════════════════════════════════ */
-    var nvdEnrichmentData = [];
-    if (scope === 'recon-only') {
-      logger.info('Phase 6: Skipping NVD Enrichment — scope is recon-only');
-      await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD enrichment skipped (Recon Only)');
-    } else {
-      try {
-        await updateProgress(scanId, 'nvd_enrichment', 62, 'Enriching findings with NVD + Vulners data...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'running' });
-        emit(io, scanId, 'ai:tool_running', { tool: 'nvd_vulners' });
-
-        logger.info('Phase 6: NVD/Vulners enrichment — searching for real-world CVE data');
-
-        var serviceKeywords = [];
-        var nmapOpenPorts2 = (nmapResults && nmapResults.openPorts) || [];
-        for (var sk = 0; sk < nmapOpenPorts2.length; sk++) {
-          var p2 = nmapOpenPorts2[sk];
-          if (p2.service && p2.version) {
-            serviceKeywords.push(p2.service + ' ' + p2.version);
-          }
-        }
-
-        for (var sw = 0; sw < Math.min(serviceKeywords.length, 3); sw++) {
-          try {
-            var nvdResults = await nvdVulners.nvdKeywordSearch(serviceKeywords[sw]);
-            if (nvdResults.length > 0) {
-              nvdEnrichmentData.push({ keyword: serviceKeywords[sw], cves: nvdResults });
-            }
-            await new Promise(function(r) { setTimeout(r, 700); });
-          } catch (e) { logger.warn('NVD search failed for ' + serviceKeywords[sw]); }
-        }
-
-        try {
-          var vulnersResults = await nvdVulners.vulnersSearch(cleanTarget);
-          if (vulnersResults.length > 0) {
-            nvdEnrichmentData.push({ source: 'vulners_target', data: vulnersResults });
-          }
-        } catch (e) { logger.warn('Vulners search failed: ' + e.message); }
-
-        completedScans.push({ tool: 'nvd_vulners', status: 'success', data: { enrichmentCount: nvdEnrichmentData.length } });
-        usedTools.push('nvd_vulners');
-
-        emit(io, scanId, 'ai:tool_complete', { tool: 'nvd_vulners', status: 'success' });
-        await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment complete — ' + nvdEnrichmentData.length + ' enrichments');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'completed' });
-        logger.info('Phase 6 completed: ' + nvdEnrichmentData.length + ' NVD/Vulners enrichments');
-      } catch (err) {
-        logger.warn('Phase 6 (NVD/Vulners) failed: ' + err.message);
-        await updateProgress(scanId, 'nvd_enrichment', 72, 'NVD/Vulners enrichment failed, continuing...');
-        emit(io, scanId, 'ai:phase_update', { phase: 'nvd_enrichment', status: 'failed' });
-      }
-    }
-
-
-    /* ═══════════════════════════════════════════
-       PHASE 7 — Gemini AI Analysis (74% → 82%)
-       ═══════════════════════════════════════════ */
-    try {
-      await updateProgress(scanId, 'ai_analysis', 74, 'AI analyzing scan results...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'running' });
-      emit(io, scanId, 'ai:thinking', { iteration: 1, maxIterations: 1 });
-
-      logger.info('Phase 7: Gemini AI analysis — ' + completedScans.length + ' scan results to analyze');
-
-      var aiDecision = await gemini.analyzeAndDecide({
+      // Analyze current state and decide next tool
+      const aiDecision = await gemini.analyzeAndDecide({
         target: cleanTarget,
         scope: scope,
-        iteration: 1,
-        maxIterations: 1,
+        iteration: iteration,
+        maxIterations: maxIterations,
         completedScans: completedScans,
         usedTools: usedTools,
       });
 
-      if (aiDecision && Array.isArray(aiDecision.currentFindings)) {
-        for (var fi = 0; fi < aiDecision.currentFindings.length; fi++) {
-          allVulnerabilities.push(aiDecision.currentFindings[fi]);
-        }
+      if (!aiDecision || aiDecision.nextAction === 'generate_report') {
+        logger.info(`AI decided to finish at iteration ${iteration}: ${aiDecision?.reasoning || 'No further actions'}`);
+        shouldContinue = false;
+        break;
       }
 
-      var decisionRecord = {
-        iteration: 1,
-        promptSummary: 'Analyzed ' + completedScans.length + ' scan results across ' + usedTools.length + ' tools',
-        response: aiDecision,
-        reasoning: (aiDecision && aiDecision.reasoning) || '',
-        action: (aiDecision && aiDecision.nextAction) || 'generate_report',
-        riskLevel: (aiDecision && aiDecision.riskLevel) || 'info',
+      const toolToRun = aiDecision.nextAction;
+      const reasoning = aiDecision.reasoning;
+      logger.info(`AI Decision: Run ${toolToRun} because ${reasoning}`);
+
+      // Add findings if any were identified in the thought process
+      if (Array.isArray(aiDecision.currentFindings)) {
+        aiDecision.currentFindings.forEach(f => {
+          if (!allVulnerabilities.some(v => v.title === f.title)) allVulnerabilities.push(f);
+        });
+      }
+
+      // Record decision
+      const decisionRecord = {
+        iteration,
+        action: toolToRun,
+        reasoning,
         timestamp: new Date(),
       };
       allDecisions.push(decisionRecord);
+      await ScanSession.findByIdAndUpdate(scanId, { $push: { aiDecisions: decisionRecord } });
+      emit(io, scanId, 'ai:decision', { iteration, decision: decisionRecord });
 
-      await ScanSession.findByIdAndUpdate(scanId, {
-        currentIteration: 1,
-        $push: { aiDecisions: decisionRecord },
-      });
+      // Execute the chosen tool
+      try {
+        let toolResult = null;
+        let phaseName = 'scanning'; // fallback
 
-      emit(io, scanId, 'ai:decision', { iteration: 1, decision: decisionRecord });
-      emit(io, scanId, 'ai:tool_complete', { tool: 'gemini_analysis', status: 'success' });
-      await updateProgress(scanId, 'ai_analysis', 82, 'AI analysis complete — ' + allVulnerabilities.length + ' vulnerabilities identified');
-      emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'completed' });
-
-      logger.info('Phase 7 completed: ' + allVulnerabilities.length + ' vulns, risk=' + ((aiDecision && aiDecision.riskLevel) || 'info'));
-    } catch (err) {
-      logger.warn('Phase 7 (Gemini Analysis) failed: ' + err.message);
-      await updateProgress(scanId, 'ai_analysis', 82, 'AI analysis failed, using heuristic fallback...');
-      emit(io, scanId, 'ai:phase_update', { phase: 'ai_analysis', status: 'failed' });
-
-      // --- HEURISTIC FALLBACK LOGIC ---
-      if (allVulnerabilities.length === 0) {
-        logger.info('Running heuristic fallback for findings extraction');
-        
-        // 1. Extract from Nmap (Only if allowed by scope)
-        if (scope !== 'recon-only' && scope !== 'web' && nmapResults && nmapResults.openPorts && nmapResults.openPorts.length > 0) {
-          nmapResults.openPorts.forEach(p => {
-            allVulnerabilities.push({
-              title: `Open Service: ${p.service || 'unknown'} on Port ${p.port}`,
-              type: 'Network Service',
-              severity: (p.port === 21 || p.port === 23 || p.port === 445) ? 'high' : 'medium',
-              description: `A network port (${p.port}/${p.protocol}) was found open running ${p.service} ${p.version || ''}.`,
-              evidence: `Port: ${p.port}, Service: ${p.service}, Version: ${p.version}`,
-              remediation: 'Verify if this service is necessary and ensure it is updated to the latest version. Close the port if it is not required.',
-              tool: 'nmap'
-            });
-          });
+        // Map Tool to Progress Phase & Endpoint
+        if (toolToRun === 'run_subfinder' && !usedTools.includes('subfinder')) {
+          phaseName = 'subdomain_scan';
+          await updateProgress(scanId, phaseName, 20 + iteration * 5, 'Running Subdomain Discovery...');
+          const res = await axios.post(`http://${KALI_IP}:5000/subfinder`, { target: cleanTarget });
+          toolResult = { tool: 'subfinder', data: res.data };
+        } else if (toolToRun === 'run_recon' && !usedTools.includes('recon')) {
+          phaseName = 'deep_recon';
+          await updateProgress(scanId, phaseName, 20 + iteration * 5, 'Running Deep Reconnaissance...');
+          const res = await axios.post(`http://${KALI_IP}:5000/recon`, { target: cleanTarget });
+          toolResult = { tool: 'recon', data: res.data };
+        } else if (toolToRun === 'nmap_scan' && !usedTools.includes('nmap')) {
+          phaseName = 'network_scan';
+          await updateProgress(scanId, phaseName, 20 + iteration * 5, 'Running Network Port Scan...');
+          const res = await axios.post(`http://${KALI_IP}:5000/nmap`, { target: cleanTarget });
+          toolResult = { tool: 'nmap', data: res.data };
+          emit(io, scanId, 'ai:terminal_log', { tool: 'nmap', text: res.data.raw || 'Nmap scan complete' });
+        } else if (toolToRun === 'web_scan_nikto' && !usedTools.includes('nikto')) {
+          phaseName = 'nikto_scan';
+          await updateProgress(scanId, phaseName, 20 + iteration * 5, 'Running Web Vulnerability Scan...');
+          const res = await axios.post(`http://${KALI_IP}:5000/nikto`, { target: cleanTarget });
+          toolResult = { tool: 'nikto', data: res.data };
+          emit(io, scanId, 'ai:terminal_log', { tool: 'nikto', text: res.data.raw || 'Nikto scan complete' });
+        } else if (toolToRun === 'exploit_check' && !usedTools.includes('exploit')) {
+          phaseName = 'exploit_scan';
+          await updateProgress(scanId, phaseName, 20 + iteration * 5, 'Running Exploitation Checks...');
+          const res = await axios.post(`http://${KALI_IP}:5000/exploit`, { target: cleanTarget });
+          toolResult = { tool: 'exploit', data: res.data };
+        } else if (toolToRun === 'traffic_analysis' && !usedTools.includes('traffic')) {
+          phaseName = 'traffic_scan';
+          await updateProgress(scanId, phaseName, 20 + iteration * 5, 'Analyzing Network Traffic...');
+          const res = await axios.post(`http://${KALI_IP}:5000/traffic`, { target: cleanTarget });
+          toolResult = { tool: 'traffic', data: res.data };
         }
 
-        // 2. Extract from Nikto (Only if allowed by scope)
-        if (scope !== 'recon-only' && scope !== 'network') {
-          const niktoScan = completedScans.find(s => s.tool === 'nikto' && s.status === 'success');
-          if (niktoScan && niktoScan.data && niktoScan.data.findings) {
-            niktoScan.data.findings.forEach(f => {
-              allVulnerabilities.push({
-                title: 'Web finding: ' + (f.slice(0, 50) + '...'),
-                type: 'Web Security',
-                severity: f.toLowerCase().includes('vulnerable') ? 'high' : 'medium',
-                description: f,
-                evidence: f,
-                remediation: 'Investigate the specific Nikto finding and patch the web server configuration or application code.',
-                tool: 'nikto'
-              });
-            });
-          }
+        if (toolResult) {
+          completedScans.push({ tool: toolResult.tool, status: 'success', data: toolResult.data });
+          usedTools.push(toolResult.tool);
+          emit(io, scanId, 'ai:tool_complete', { tool: toolResult.tool, status: 'success' });
+          emit(io, scanId, 'ai:phase_update', { phase: phaseName, status: 'completed' });
+        } else {
+          // If tool already used or invalid, skip
+          logger.info(`Tool ${toolToRun} already used or skipped.`);
         }
 
-        // 3. Extract from Subfinder
-        const subScan = completedScans.find(s => s.tool === 'subfinder' && s.status === 'success');
-        if (subScan && subScan.data && subScan.data.subdomains && subScan.data.subdomains.length > 0) {
+      } catch (err) {
+        logger.error(`Error executing tool ${toolToRun}: ${err.message}`);
+        emit(io, scanId, 'ai:tool_complete', { tool: toolToRun, status: 'failed', error: err.message });
+      }
+
+      iteration++;
+    }
+
+    logger.info('Dynamic Orchestration Loop complete. Finalizing report...');
+
+    /* ═══════════════════════════════════════════
+       HEURISTIC FALLBACK LOGIC
+       Extract findings manually if AI missed them
+       ═══════════════════════════════════════════ */
+    if (allVulnerabilities.length === 0) {
+      logger.info('Running heuristic fallback for findings extraction');
+
+      // 1. Extract from Nmap
+      const nmapScan = completedScans.find(s => s.tool === 'nmap' && s.status === 'success');
+      if (nmapScan && nmapScan.data && nmapScan.data.ports) {
+        nmapScan.data.ports.forEach(p => {
           allVulnerabilities.push({
-            title: `Information Disclosure: ${subScan.data.subdomains.length} Subdomains discovered`,
-            type: 'Reconnaissance',
-            severity: 'info',
-            description: `A total of ${subScan.data.subdomains.length} subdomains were identified, increasing the attack surface.`,
-            evidence: subScan.data.subdomains.slice(0, 10).join(', ') + (subScan.data.subdomains.length > 10 ? '...' : ''),
-            remediation: 'Ensure all subdomains are authorized and do not expose sensitive development or staging environments.',
-            tool: 'subfinder'
+            title: `Open Service: ${p.service || 'unknown'} on Port ${p.port}`,
+            type: 'Network Service',
+            severity: (p.port === 21 || p.port === 23 || p.port === 445) ? 'high' : 'medium',
+            description: `A network port (${p.port}/${p.protocol}) was found open running ${p.service} ${p.version || ''}.`,
+            evidence: `Port: ${p.port}, Service: ${p.service}, Version: ${p.version}`,
+            remediation: 'Verify if this service is necessary and ensure it is updated to the latest version.',
+            tool: 'nmap'
           });
-        }
+        });
+      }
 
-        // 4. Extract from Traffic Analysis (Only if allowed by scope)
-        if (scope !== 'recon-only' && scope !== 'web') {
-          const trafficScan = completedScans.find(s => s.tool === 'traffic' && s.status === 'success');
-          if (trafficScan && trafficScan.data && trafficScan.data.analysis) {
-            allVulnerabilities.push({
-              title: 'Network Traffic Risk: Insecure Protocols Detected',
-              type: 'Network Security',
-              severity: 'medium',
-              description: 'Analysis of network traffic identified usage of potentially insecure or unencrypted protocols.',
-              evidence: trafficScan.data.analysis,
-              remediation: 'Review the captured traffic and enforce encrypted communication (SSL/TLS/SSH) for all sensitive network operations.',
-              tool: 'traffic'
-            });
-          }
-        }
+      // 2. Extract from Nikto
+      const niktoScan = completedScans.find(s => s.tool === 'nikto' && s.status === 'success');
+      if (niktoScan && niktoScan.data && niktoScan.data.findings) {
+        niktoScan.data.findings.forEach(f => {
+          allVulnerabilities.push({
+            title: 'Web finding: ' + (typeof f === 'string' ? f.slice(0, 50) : 'Finding') + '...',
+            type: 'Web Security',
+            severity: 'medium',
+            description: typeof f === 'string' ? f : JSON.stringify(f),
+            evidence: typeof f === 'string' ? f : 'Finding detected',
+            remediation: 'Investigate the specific Nikto finding and patch server configuration.',
+            tool: 'nikto'
+          });
+        });
+      }
+
+      // 3. Extract from Subfinder
+      const subScan = completedScans.find(s => s.tool === 'subfinder' && s.status === 'success');
+      if (subScan && subScan.data && subScan.data.subdomains) {
+        allVulnerabilities.push({
+          title: `Info: ${subScan.data.subdomains.length} Subdomains discovered`,
+          type: 'Reconnaissance',
+          severity: 'info',
+          description: `Identified ${subScan.data.subdomains.length} subdomains.`,
+          evidence: subScan.data.subdomains.slice(0, 5).join(', '),
+          remediation: 'Audit discovered subdomains.',
+          tool: 'subfinder'
+        });
       }
     }
 
