@@ -503,6 +503,16 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
     emit(io, scanId, 'ai:phase_update', { phase: 'report', status: 'completed' });
 
     logger.info('AI Agent completed: scanId=' + scanId + ' vulns=' + finalFindings.length + ' score=' + finalRiskScore);
+
+    // Finalize report in history (Reports Section) - No disturbance to scan flow
+    try {
+      const reportService = require('./report.service');
+      await reportService.createReportFromSession(scanId, userId);
+      logger.info('Auto-saved report to history for scanId: ' + scanId);
+    } catch (reportErr) {
+      logger.warn('Report auto-save background task failed: ' + reportErr.message);
+    }
+
     return finalSession;
 
   } catch (err) {
@@ -602,6 +612,16 @@ const runQuickScan = async ({ scanId, userId, target, io }) => {
     });
 
     logger.info('Quick scan completed: scanId=' + scanId);
+
+    // Finalize report in history (Reports Section) - No disturbance to scan flow
+    try {
+      const reportService = require('./report.service');
+      await reportService.createReportFromSession(scanId, userId);
+      logger.info('Auto-saved report to history for quick scan: ' + scanId);
+    } catch (reportErr) {
+      logger.warn('Report auto-save background task failed: ' + reportErr.message);
+    }
+
     return finalSession;
   } catch (err) {
     logger.error('Quick scan failed: scanId=' + scanId + ' error=' + err.message);
