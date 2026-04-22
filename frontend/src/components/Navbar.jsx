@@ -51,7 +51,7 @@ const Navbar = () => {
       </Link>
 
       <div className="topbar-right">
-        <NotificationBell />
+        {/* <NotificationBell /> */}
 
         <div style={{ position: 'relative' }} ref={dropdownRef}>
           <button className="user-btn" onClick={() => setOpen((prev) => !prev)}>
