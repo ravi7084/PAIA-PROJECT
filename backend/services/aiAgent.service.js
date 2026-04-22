@@ -135,6 +135,7 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
   var usedTools = [];
   var allVulnerabilities = [];
   var allDecisions = [];
+  var nvdEnrichmentData = [];
 
   try {
     /* ═══════════════════════════════════════════
@@ -402,9 +403,6 @@ const runAIAgent = async ({ scanId, targetId, userId, target, scope, io }) => {
       emit(io, scanId, 'ai:phase_update', { phase: 'mitre_mapping', status: 'failed' });
     }
 
-      completedScans.push({ tool: 'mitre_mapping', status: 'success', data: { tacticsCount: mitreMapping.chain.length, coverage: mitreMapping.coveragePercent } });
-
-      
     await updateProgress(scanId, 'report_generation', 89, 'Generating penetration test report...');
     emit(io, scanId, 'ai:phase_update', { phase: 'report', status: 'running' });
 
