@@ -56,13 +56,13 @@ const Sidebar = () => {
         <motion.div variants={itemVariants} className="sidebar-group">
           <div className="sidebar-section-title">Workspace</div>
           <NavItem to="/dashboard" icon={LayoutDashboard} label="Dashboard" />
-          <NavItem to="/command-center" icon={Radar} label="Command Center" badge="Live" badgeClass="pulse" />
+          {/* <NavItem to="/command-center" icon={Radar} label="Command Center" badge="Live" badgeClass="pulse" /> */}
         </motion.div>
 
         {/* Operations */}
         <motion.div variants={itemVariants} className="sidebar-group">
           <div className="sidebar-section-title">Operations</div>
-          <NavItem to="/targets" icon={Target} label="Targets" />
+          {/* <NavItem to="/targets" icon={Target} label="Targets" /> */}
           <NavItem to="/scans" icon={ScanLine} label="Scan Center" />
           <NavItem to="/ai-agent" icon={BrainCircuit} label="AI Agent" badge="AI" badgeClass="" />
           <NavItem to="/threat-intel" icon={Globe} label="Threat Intel" />

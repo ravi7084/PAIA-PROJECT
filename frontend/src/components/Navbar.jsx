@@ -53,66 +53,23 @@ const Navbar = () => {
       <div className="topbar-right">
         {/* <NotificationBell /> */}
 
-        <div style={{ position: 'relative' }} ref={dropdownRef}>
-          <button className="user-btn" onClick={() => setOpen((prev) => !prev)}>
+        <div className="user-profile-card">
+          <Link to="/profile" className="user-info-section">
             <div className="user-avatar">
               {getInitials(user?.name)}
             </div>
 
-            <div style={{ textAlign: 'left' }}>
+            <div className="user-details">
               <div className="user-name">{user?.name}</div>
               <div className="user-role">{user?.role}</div>
             </div>
+          </Link>
 
-            <ChevronDown size={12} color="var(--text3)" />
+          <div className="user-card-sep" />
+
+          <button className="user-logout-btn" onClick={handleLogout} title="Sign out">
+            <LogOut size={14} />
           </button>
-
-          <AnimatePresence>
-            {open && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                transition={{ duration: 0.15, ease: "easeOut" }}
-                className="dropdown"
-                style={{ transformOrigin: 'top right' }}
-              >
-                <div className="dd-head">
-                  <div className="dd-head-name">{user?.name}</div>
-                  <div className="dd-head-email">{user?.email}</div>
-                </div>
-
-                <motion.button whileHover={{ x: 4, backgroundColor: 'rgba(255,255,255,0.05)' }}
-                  className="dd-item"
-                  onClick={() => {
-                    setOpen(false);
-                    navigate('/profile');
-                  }}
-                >
-                  <User size={13} />
-                  My profile
-                </motion.button>
-
-                <motion.button whileHover={{ x: 4, backgroundColor: 'rgba(255,255,255,0.05)' }}
-                  className="dd-item"
-                  onClick={() => {
-                    setOpen(false);
-                    navigate('/profile');
-                  }}
-                >
-                  <Settings size={13} />
-                  Security Center
-                </motion.button>
-
-                <div className="dd-sep" />
-
-                <motion.button whileHover={{ x: 4, backgroundColor: 'rgba(239,68,68,0.1)' }} className="dd-item danger" onClick={handleLogout}>
-                  <LogOut size={13} />
-                  Sign out
-                </motion.button>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </div>
     </header>
