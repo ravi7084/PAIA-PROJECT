@@ -17,7 +17,6 @@ import Scans from './pages/Scans';
 import AIAgent from './pages/AIAgent';
 import ThreatIntel from './pages/ThreatIntel';
 import Reports from './pages/Reports';
-import CommandCenter from './pages/CommandCenter';
 
 const App = () => (
   <BrowserRouter>
@@ -49,7 +48,6 @@ const App = () => (
           <Route path="/auth/callback" element={<AuthCallback />} />
 
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-          <Route path="/command-center" element={<PrivateRoute><CommandCenter /></PrivateRoute>} />
           <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
           <Route path="/targets" element={<PrivateRoute><Targets /></PrivateRoute>} />
           <Route path="/scans" element={<PrivateRoute><Scans /></PrivateRoute>} />
